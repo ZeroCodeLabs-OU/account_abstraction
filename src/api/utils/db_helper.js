@@ -31,7 +31,7 @@ async function fetchAccountIdByWalletAddress(walletAddress) {
     }
 }
 
-async function fetchSmartAccountAddressBySmartAccountAddress(walletAddress) {
+async function fetchSmartAccountIDBySmartAccountAddress(walletAddress) {
     const query = 'SELECT id FROM account_abstraction.smart_account WHERE smart_account_address = $1';
     try {
         const result = await db.query(query, [walletAddress]);
@@ -120,6 +120,6 @@ async function createSmartAccountContract({
 module.exports = {
     fetchBaseURI,
     fetchAccountIdByWalletAddress,
-    fetchSmartAccountAddressBySmartAccountAddress,
+    fetchSmartAccountIDBySmartAccountAddress,
     createSmartAccountContract
 };

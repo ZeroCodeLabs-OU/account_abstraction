@@ -1,12 +1,16 @@
 
 const db = require('../config/dbConfig');
-
+const {  fetchBaseURI,
+    fetchAccountIdByWalletAddress,
+    fetchSmartAccountIDBySmartAccountAddress,
+    createSmartAccountContract}=require('../utils/db_helper');
 exports.createVoucher = async (req, res) => {
-    const { smart_account_id, description, name, status, latitude, longitude } = req.body;
+    const { wallet_address, description, name, status, latitude, longitude } = req.body;
     try {
+        const SmartAccountId= fetchAccountIdByWalletAddress(wallet_address)
         const result = await db.query(
             'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326), now()) RETURNING *',
-            [smart_account_id, name, description, status, latitude, longitude]
+            [SmartAccountId, name, description, status, latitude, longitude]
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -75,11 +79,13 @@ exports.deleteVoucher = async (req, res) => {
 };
 
 exports.getVouchersBySmartAccountId = async (req, res) => {
-    const { smart_account_id } = req.params; 
+    const { wallet_address } = req.params; 
     try {
+        const SmartAccountId= fetchAccountIdByWalletAddress(wallet_address)
+
         const result = await db.query(
             'SELECT * FROM account_abstraction.voucher WHERE smart_account_id = $1',
-            [smart_account_id]
+            [SmartAccountId]
         );
         if (result.rows.length > 0) {
             res.status(200).json(result.rows);
@@ -94,11 +100,13 @@ exports.getVouchersBySmartAccountId = async (req, res) => {
 
 
 exports.getVouchersBySmartAccountId_Status = async (req, res) => {
-    const { smart_account_id,status } = req.params; 
+    const { wallet_address,status } = req.params; 
     try {
+        const SmartAccountId= fetchAccountIdByWalletAddress(wallet_address)
+
         const result = await db.query(
             'SELECT * FROM account_abstraction.voucher WHERE smart_account_id = $1 AND status = $2 ',
-            [smart_account_id,status]
+            [SmartAccountId,status]
         );
         if (result.rows.length > 0) {
             res.status(200).json(result.rows);

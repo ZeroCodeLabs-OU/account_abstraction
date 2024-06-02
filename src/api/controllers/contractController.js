@@ -7,7 +7,7 @@ const { abi, bytecode } = contractJson;
 const {encodeInitializationData} = require('../utils/contractImplementation');
 const {  fetchBaseURI,
     fetchAccountIdByWalletAddress,
-    fetchSmartAccountAddressBySmartAccountAddress,
+    fetchSmartAccountIDBySmartAccountAddress,
     createSmartAccountContract}=require('../utils/db_helper');
 
 
@@ -71,7 +71,7 @@ exports.deploySmartContract = async (req, res) => {
 
         
         const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-        const smartAccountId = await fetchSmartAccountAddressBySmartAccountAddress(smartAccountAddress)
+        const smartAccountId = await fetchSmartAccountIDBySmartAccountAddress(smartAccountAddress)
         const base_URI = await fetchBaseURI(voucherId);
         const public_mint_start= Math.floor(Date.now() / 1000) 
         const presale_mint_start=Math.floor(Date.now() / 1000) + 86400  
