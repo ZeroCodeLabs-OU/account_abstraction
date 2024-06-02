@@ -4,13 +4,17 @@ const ethers = require('ethers');
 const db = require('../config/dbConfig');
 const contractJson = require('../utils/contracts/erc1155.json');
 const { abi, bytecode } = contractJson;
-const {encodeInitializationParameters} = require('../utils/contractImplementation');
+const {encodeInitializationData} = require('../utils/contractImplementation');
+const {  fetchBaseURI,
+    fetchAccountIdByWalletAddress,
+    fetchSmartAccountAddressBySmartAccountAddress,
+    createSmartAccountContract}=require('../utils/db_helper');
 
 
 
 
 exports.deploySmartContract = async (req, res) => {
-    const { encrypted_wallet, name, max_supply,tokenQuantity, max_token_per_mint , max_token_per_person} = req.body;
+    const { encrypted_wallet,voucherId, name, max_supply,tokenQuantity, max_token_per_mint , max_token_per_person} = req.body;
 
     if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
@@ -39,7 +43,7 @@ exports.deploySmartContract = async (req, res) => {
         ]).encodeFunctionData("deploy", [randomSalt, bytecode]);
 
         const txDeploy = {
-            to: "0x988C135a1049Ce61730724afD342fb7C56CD2776",
+            to: process.env.CONTRACT_DEPLOYER_ADDRESS,
             data: deployData
         };
 
@@ -65,12 +69,16 @@ exports.deploySmartContract = async (req, res) => {
             return '0x' + computedAddress.slice(26);
         }
 
-       
+        
         const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-        const initData = encodeInitializationParameters(name, max_supply,tokenQuantity,max_token_per_person, max_token_per_mint,smartAccountAddress)
+        const smartAccountId = await fetchSmartAccountAddressBySmartAccountAddress(smartAccountAddress)
+        const base_URI = await fetchBaseURI(voucherId);
+        const public_mint_start= Math.floor(Date.now() / 1000) 
+        const presale_mint_start=Math.floor(Date.now() / 1000) + 86400  
+        const initData = encodeInitializationData( name, max_supply,tokenQuantity, max_token_per_mint , max_token_per_person,base_URI,public_mint_start,presale_mint_start,smartAccountAddress);
         const deployedAddress = unpadEthereumAddress(computedAddress)
         const initTx = {
-            to: deployedAddress,
+            to:deployedAddress,
             data: initData
         };
 
@@ -82,6 +90,30 @@ exports.deploySmartContract = async (req, res) => {
         if (initReceipt.success=="false") {
             throw new Error('Initialization transaction failed');
         }
+
+        await createSmartAccountContract({
+            smartAccountId,
+            voucherId,
+            name,
+            description: "",  
+            contractAddress: deployedAddress,
+            chain: "MATIC_AMOY",  
+            type: "ERC1155",  
+            baseUri: base_URI,
+            tokenSymbol: name.slice(0, 4),
+            royaltyShare: 0,
+            maxSupply: max_supply,
+            teamReserved: 0,  
+            maxPerPerson: max_token_per_person,
+            maxPerTransaction: max_token_per_mint,
+            presaleMintStartDate: new Date(),
+            publicMintStartDate: new Date(), 
+            prerevealBaseUri: "",
+            sbtActivated: false,
+            isGasless: false,
+            isArchived: false,
+            externalContract: false
+        });
         
         res.status(200).json({
             message: "Contract deployed and initialized successfully",

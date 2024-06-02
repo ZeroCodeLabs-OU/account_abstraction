@@ -35,6 +35,7 @@ exports.getVoucherById = async (req, res) => {
 };
 
 
+
 exports.updateVoucher = async (req, res) => {
     const { voucher_id } = req.params;
     const { description, name, status, latitude, longitude } = req.body;
@@ -79,6 +80,25 @@ exports.getVouchersBySmartAccountId = async (req, res) => {
         const result = await db.query(
             'SELECT * FROM account_abstraction.voucher WHERE smart_account_id = $1',
             [smart_account_id]
+        );
+        if (result.rows.length > 0) {
+            res.status(200).json(result.rows);
+        } else {
+            res.status(404).send('No vouchers found for this smart account.');
+        }
+    } catch (error) {
+        console.error('Error retrieving vouchers:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+
+exports.getVouchersBySmartAccountId_Status = async (req, res) => {
+    const { smart_account_id,status } = req.params; 
+    try {
+        const result = await db.query(
+            'SELECT * FROM account_abstraction.voucher WHERE smart_account_id = $1 AND status = $2 ',
+            [smart_account_id,status]
         );
         if (result.rows.length > 0) {
             res.status(200).json(result.rows);
