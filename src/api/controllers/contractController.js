@@ -91,7 +91,7 @@ exports.deploySmartContract = async (req, res) => {
             throw new Error('Initialization transaction failed');
         }
 
-        await createSmartAccountContract({
+        const ContractResponse = await createSmartAccountContract({
             smartAccountId,
             voucherId,
             name,
@@ -117,9 +117,7 @@ exports.deploySmartContract = async (req, res) => {
         
         res.status(200).json({
             message: "Contract deployed and initialized successfully",
-            transactionHash,
-            DeployedContractAddress: deployedAddress,
-            receipt: initReceipt
+            ContractResponse
         });
     } catch (error) {
         console.error('Error deploying smart contract:', error);

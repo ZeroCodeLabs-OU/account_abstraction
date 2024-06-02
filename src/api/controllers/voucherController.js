@@ -110,3 +110,29 @@ exports.getVouchersBySmartAccountId_Status = async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 };
+
+
+exports.updateVoucherStatus = async (req, res) => {
+    const { voucher_id } = req.params;
+    const { status } = req.body;
+
+    const validStatuses = ['pending', 'available', 'unavailable', 'banned'];
+    if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status value' });
+    }
+
+    try {
+        const result = await db.query(
+            'UPDATE account_abstraction.voucher SET status = $1 WHERE id = $2 RETURNING *',
+            [status, voucher_id]
+        );
+        if (result.rows.length) {
+            res.status(200).json(result.rows[0]);
+        } else {
+            res.status(404).send('Voucher not found.');
+        }
+    } catch (error) {
+        console.error('Error updating voucher status:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};

@@ -109,7 +109,7 @@ async function createSmartAccountContract({
 
     try {
         const result = await db.query(query, values);
-        return result.rows[0].id;  // Returning the ID of the newly created record
+        return result.rows[0].id;  
     } catch (err) {
         console.error("Database error while creating smart account smart contract:", err);
         throw err;
