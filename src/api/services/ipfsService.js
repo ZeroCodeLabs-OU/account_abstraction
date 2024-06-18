@@ -1,11 +1,13 @@
 import fs from 'fs';
-import path from 'path';
 import {createHelia} from 'helia';
-import { unixfs } from '@helia/unixfs';
-import { strings } from '@helia/strings';
+import {unixfs} from '@helia/unixfs';
 
 async function createHeliaInstance() {
-  return await createHelia();
+  return await createHelia({
+    host: 'localhost',
+    protocol: 'http',
+    port: '5001'
+  });
 }
 
 async function startInstanceNode(helia) {
@@ -14,63 +16,26 @@ async function startInstanceNode(helia) {
       throw err;
     }
   });
-  console.log('Backend IPFS node is running.');
+  console.log('IPFS node is running.');
 }
 
-/**
- * Add a file to an ipfs node.
- * @param helia Instance of createHelia.
- * @param filePath File path to add.
- * @returns {Promise<void>}
- */
-async function addFile(helia, filePath) {
-  const unixFS = unixfs(helia);
-  const file = {
-    path: filePath,
-    content: fs.readFileSync(filePath)
-  };
-
+async function uploadImagesToIPFS(helia, filesArray) {
   try {
-    const filesAdded = await unixFS.addFile(file);
-    console.log('Added file:', filesAdded.path, filesAdded.cid);
-    return filesAdded;
+    const unixFS = unixfs(helia);
+    const dirCID = await unixFS.addDirectory();
+    const uploadPromises = await filesArray.map(async (file) => {
+      const fileBuffer = await fs.promises.readFile(file.path);
+      const fileUint8Array = new Uint8Array(fileBuffer);
+      const fileCID = await unixFS.addBytes(fileUint8Array);
+      console.log(fileCID.toString());
+      await unixFS.cp(fileCID, dirCID, file.originalname, {force: true});
+    });
+    await Promise.all(uploadPromises);
+    return dirCID.toString();
   } catch (error) {
-    console.error(error);
+    console.error('An error is occurred while uploading files.', error);
+    throw error;
   }
 }
 
-async function addFolder(helia, folderPath) {
-  const unixFS = unixfs(helia);
-  const files = fs.readdirSync(folderPath).map(fileName => {
-    return {
-      path: path.join(folderPath, fileName),
-      content: fs.readFileSync(path.join(folderPath, fileName))
-    };
-  });
-
-  try {
-    const result = await unixFS.addAll(files);
-    console.log(result);
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-async function addString(helia, content) {
-  const s = strings(helia)
-  const cid = await s.add(content)
-  return cid.toString();
-}
-
-/**
- * Get a file as string from an ipfs node.
- * @param helia Instance of createHelia.
- * @param cid The cid of a file.
- * @returns {Promise<string>}
- */
-async function getContentFromCid(helia, cid) {
-  const file = await helia.cat(cid);
-  return file.toString();
-}
-
-export {addFile, getContentFromCid, addString, addFolder, createHeliaInstance, startInstanceNode};
+export {uploadImagesToIPFS, createHeliaInstance, startInstanceNode};

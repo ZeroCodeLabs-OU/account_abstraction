@@ -11,9 +11,14 @@ import {deploySmartContract} from './api/controllers/contractController.js';
 import { createVoucherSchema, updateVoucherSchema, DeleteVoucherSchema } from './api/middleware/voucherSchema.js';
 import {getSmartAccount, createSmartAccount} from './api/controllers/walletController.js';
 
+import multer from 'multer';
 import { notFound, errorHandler } from './middlewares.js';
 
-import { startInstanceNode, addFile, addFolder, createHeliaInstance } from './api/services/ipfsService.js';
+import {
+  startInstanceNode,
+  uploadImagesToIPFS,
+  createHeliaInstance,
+} from './api/services/ipfsService.js';
 
 import express from 'express';
 import morgan from 'morgan';
@@ -24,12 +29,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
+const upload = multer({dest: 'uploads/'});
 
 async function RunServer() {
   const helia = await createHeliaInstance();
-  /*await startInstanceNode(helia).catch(error => {
-    console.error('Error starting the backend IPFS node', error);
-  });*/
+  await startInstanceNode(helia).catch(error => {
+    console.error('Error starting the IPFS node', error);
+  });
 
   app.use(morgan('dev'));
   app.use(helmet());
@@ -40,9 +46,12 @@ async function RunServer() {
     res.send('server test working');
   });
 
-  app.get('/ipfs', async (req, res) => {
-    const cid = await addFolder(helia, './tmp');
-    res.send(`CID: ${cid}`);
+  app.post('/ipfs/images', upload.array('files', 1000), async (req, res) => {
+    await uploadImagesToIPFS(helia, req.files).then((cid) => {
+      res.json({status: req.status, cid: cid}).status(200);
+    }).catch((error) => {
+      res.json({status: req.status, response: error}).status(200);
+    });
   });
 
   // smart_account
