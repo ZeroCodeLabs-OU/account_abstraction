@@ -1,7 +1,8 @@
-const crypto = require('crypto');
+import crypto from 'crypto';
 
-const key = process.env.ENCRYPTION_KEY; 
-const ethers =require("ethers")
+const key = process.env.ENCRYPTION_KEY;
+import {ethers} from 'ethers';
+
 // Decryption function
 function decrypt(encryptedData, inputIV) {
   const algorithm = 'aes-256-cbc';
@@ -14,4 +15,4 @@ function decrypt(encryptedData, inputIV) {
 function getFunctionSelector(signature) {
   return ethers.keccak256(ethers.toUtf8Bytes(signature)).substring(0, 10);
 }
-module.exports = { decrypt ,getFunctionSelector};
+export { decrypt, getFunctionSelector };
