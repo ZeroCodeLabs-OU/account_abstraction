@@ -30,9 +30,9 @@ async function startInstanceNode(helia) {
 
 /**
  * Upload Medias|Files to IPFS.
- * @param helia
- * @param filesArray
- * @returns {Promise<string>}
+ * @param helia createHelia instance.
+ * @param filesArray Files to upload.
+ * @returns {Promise<string>} Directory CID.
  */
 async function uploadImagesToIPFS(helia, filesArray) {
   try {
