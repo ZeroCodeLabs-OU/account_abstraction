@@ -18,6 +18,7 @@ import {
   startInstanceNode,
   uploadImagesToIPFS,
   createHeliaInstance,
+  uploadMetadataToIPFS,
 } from './api/services/ipfsService.js';
 
 import express from 'express';
@@ -50,7 +51,15 @@ async function RunServer() {
     await uploadImagesToIPFS(helia, req.files).then((cid) => {
       res.json({status: req.status, cid: cid}).status(200);
     }).catch((error) => {
-      res.json({status: req.status, response: error}).status(200);
+      res.json({status: req.status, response: error}).status(500);
+    });
+  });
+
+  app.post('/ipfs/metadata', upload.array('files', 1000), async (req, res) => {
+    await uploadMetadataToIPFS(helia, req.files).then((cid) => {
+      res.json({status: req.status, cid: cid}).status(200);
+    }).catch((error) => {
+      res.json({status: req.status, response: error}).status(500);
     });
   });
 
