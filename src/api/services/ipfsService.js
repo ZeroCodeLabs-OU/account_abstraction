@@ -8,9 +8,12 @@ import {unixfs} from '@helia/unixfs';
  */
 async function createHeliaInstance() {
   return await createHelia({
-    host: 'localhost',
-    protocol: 'http',
-    port: '5001'
+    host: 'ipfs.infura.io',
+    protocol: 'https',
+    port: '5001',
+    headers: {
+      authorization: 'Basic ' + Buffer.from(process.env.INFURA_PROJECT_ID + ':' + process.env.INFURA_PROJECT_SECRET).toString('base64')
+    }
   });
 }
 
