@@ -13,6 +13,7 @@ import {getSmartAccount, createSmartAccount} from './api/controllers/walletContr
 
 import multer from 'multer';
 import { notFound, errorHandler } from './middlewares.js';
+import authenticateToken from "./api/middleware/authenticateToken.js";
 
 import {
   startInstanceNode,
@@ -76,6 +77,11 @@ async function RunServer() {
 
   // contract
   app.post('/deploy_contract', deploySmartContract);
+
+  // JWT
+  app.post('/api/jwt', authenticateToken, (req, res) => {
+    res.json(req.auth);
+  });
 
   app.use(notFound);
   app.use(errorHandler);
