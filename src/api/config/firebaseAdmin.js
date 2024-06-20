@@ -12,7 +12,7 @@ const {
 
 const serviceAccount = {
     projectId: FIREBASE_PROJECT_ID,
-    privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),  // Ensure new lines are correctly formatted
+    privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),  
     clientEmail: FIREBASE_CLIENT_EMAIL
 };
 

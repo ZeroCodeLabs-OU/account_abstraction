@@ -5,7 +5,6 @@ dotenv.config();
 
 import { processFiles } from './src/api/services/firestorage.js';
 
-import { createSmartAccountSchema, getSmartAccountSchema } from './src/api/middleware/validateRequest.js';
 import {
   createVoucher, 
   getVoucherById, 
