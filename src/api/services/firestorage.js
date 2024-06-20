@@ -2,8 +2,10 @@ import { bucket } from '../config/firebaseAdmin.js';
 import { create } from 'ipfs-http-client';
 import {uploadToIPFSAndPin} from "./ipfsService.js";
 import {insertNFTMetadata,insertBaseURI} from "../utils/db_helper.js";
+const infuraPublic=process.env.INFURA_PROJECT_ID
+const infuraPrivate=process.env.INFURA_PROJECT_SECRET
 
-const auth = 'Basic ' + Buffer.from('641feefe9682428ab1e3c5bcabee9ad8'+ ':' + '48045231002c4b158ae4d2d908c1730d' ).toString('base64');
+const auth = 'Basic ' + Buffer.from(infuraPublic+ ':' + infuraPrivate ).toString('base64');
 const client = create({
     host: 'ipfs.infura.io',
     port: 5001,
