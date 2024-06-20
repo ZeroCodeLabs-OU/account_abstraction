@@ -1,12 +1,11 @@
-const { getSigner } = require("../services/biconomyService");
-const { createSmartAccountClient, createPaymaster ,PaymasterMode} = require("@biconomy/account");
-const ethers = require('ethers');
-const crypto = require('crypto');
-const db = require('../config/dbConfig');
-const { fetchSmartAccountIDBySmartAccountAddress, fetchAccountIdByWalletAddress, fetchBaseURI ,getContractAddressByVoucherId} = require('../utils/db_helper');
-const { Wallet } = require("ethers");
+import { getSigner } from "../services/biconomyService.js";
+import { createSmartAccountClient, createPaymaster, PaymasterMode } from "@biconomy/account";
+import { ethers } from 'ethers';
+import crypto from 'crypto';
+import db from '../config/dbConfig.js';
+import { fetchSmartAccountIDBySmartAccountAddress, fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
 
-exports.generateQRData = async (req, res) => {
+export const generateQRData = async (req, res) => {
     const { encrypted_wallet, voucherId, tokenId, amount } = req.body;
 
     // Validate the encrypted wallet data
@@ -52,8 +51,7 @@ exports.generateQRData = async (req, res) => {
     }
 };
 
-
-exports.decryptAndRevoke = async (req, res) => {
+export const decryptAndRevoke = async (req, res) => {
     const { encrypted_wallet, encryptedData, qrDataId } = req.body;
 
     if (!encryptedData || !qrDataId) {
@@ -100,12 +98,12 @@ exports.decryptAndRevoke = async (req, res) => {
             "function balanceOf(address account, uint256 id) public view returns (uint256)"
         ]).encodeFunctionData("balanceOf", [walletAddress, tokenId]);
 
-        const balance = await ethers.getDefaultProvider().call({
+        const balanceHex = await ethers.getDefaultProvider().call({
             to: contractAddr,
             data: balanceOfData
         });
 
-        // const balance = ethers.BigNumber.from(balanceHex).toNumber();
+        const balance = ethers.BigNumber.from(balanceHex).toNumber();
 
         if (balance < amount) {
             return res.status(400).json({ error: 'Insufficient balance' });

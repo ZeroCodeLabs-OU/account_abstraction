@@ -1,8 +1,9 @@
-const { createSmartAccountClient, createPaymaster } = require("@biconomy/account");
-const ethers = require('ethers');
-const db = require('../config/dbConfig');
-const { getSigner } = require("../services/biconomyService");
-exports.createSmartAccount = async (req, res) => {
+import { createSmartAccountClient, createPaymaster } from '@biconomy/account';
+import {ethers} from 'ethers';
+import db from '../config/dbConfig.js';
+import { getSigner } from '../services/biconomyService.js';
+
+export const createSmartAccount = async (req, res) => {
   try {
     const { encrypted_wallet } = req.body;
     if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
@@ -12,14 +13,14 @@ exports.createSmartAccount = async (req, res) => {
     // Setup Paymaster and other dependent services
     const paymaster = await createPaymaster({
       paymasterUrl: process.env.PAYMASTER_URL,
-      strictMode: true
+      strictMode: true,
     });
 
     const signerInstance = getSigner(encrypted_wallet);
     const biconomySmartAccount = await createSmartAccountClient({
-        signer: signerInstance,
-        paymaster,
-        bundlerUrl: process.env.BUNDLER_URL 
+      signer: signerInstance,
+      paymaster,
+      bundlerUrl: process.env.BUNDLER_URL,
     });
 
     const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
@@ -27,11 +28,10 @@ exports.createSmartAccount = async (req, res) => {
     // Store in database and return the inserted data
     const result = await db.query(
       'INSERT INTO account_abstraction.smart_account (wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3) RETURNING *',
-      [signerInstance.address, smartAccountAddress, new Date()]
+      [signerInstance.address, smartAccountAddress, new Date()],
     );
 
     res.status(201).json(result.rows[0]);
-
   } catch (error) {
     console.error('Error creating smart account:', error);
 
@@ -42,7 +42,7 @@ exports.createSmartAccount = async (req, res) => {
 
       return res.status(409).json({
         error: 'A smart account with this wallet address already exists.',
-        wallet_address: walletAddress
+        wallet_address: walletAddress,
       });
     }
 
@@ -50,10 +50,7 @@ exports.createSmartAccount = async (req, res) => {
   }
 };
 
-
-
-
-exports.getSmartAccount = async (req, res) => {
+export const getSmartAccount = async (req, res) => {
   try {
     const { wallet_address } = req.body;
 

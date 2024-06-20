@@ -1,45 +1,40 @@
+import db from '../config/dbConfig.js';
+import { fetchBaseURI, fetchAccountIdByWalletAddress, fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress } from '../utils/db_helper.js';
+import { getSigner } from "../services/biconomyService.js";
+import { ethers } from 'ethers';
 
-const db = require('../config/dbConfig');
-const {  fetchBaseURI,
-    fetchAccountIdByWalletAddress,
-    fetchSmartAccountIDBySmartAccountAddress,
-    createSmartAccountContract,fetchSmartAccountByWalletAddress}=require('../utils/db_helper');
-const { getSigner } = require("../services/biconomyService");
-const ethers = require('ethers');
-
-
-exports.createVoucher = async (req, res) => {
-        const { encrypted_wallet, description, name, status, latitude, longitude } = req.body;
-        try {
-            if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-                console.error('Invalid encrypted wallet data:', encrypted_wallet);
-                return res.status(400).json({ error: 'Invalid encrypted wallet data' });
-            }
-        
-            
-            const signerInstance = getSigner(encrypted_wallet);
-            if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-                console.error('Invalid or undefined signer address:', signerInstance);
-                return res.status(400).json({ error: 'Invalid or undefined signer address' });
-            }
-        
-            const wallet_address = signerInstance.address;
-            const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
-            if (!SmartAccountId) {
-                return res.status(404).json({ error: 'Smart account not found' });
-            }
-    
-            const result = await db.query(
-                'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
-                [SmartAccountId, name, description, status, latitude, longitude]
-            );
-            res.status(201).json(result.rows[0]);
-        } catch (error) {
-            console.error('Error creating voucher:', error);
-            res.status(500).json({ error: 'Internal server error' });
+export const createVoucher = async (req, res) => {
+    const { encrypted_wallet, description, name, status, latitude, longitude } = req.body;
+    try {
+        if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
+            console.error('Invalid encrypted wallet data:', encrypted_wallet);
+            return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
+
+        const signerInstance = getSigner(encrypted_wallet);
+        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
+            console.error('Invalid or undefined signer address:', signerInstance);
+            return res.status(400).json({ error: 'Invalid or undefined signer address' });
+        }
+
+        const wallet_address = signerInstance.address;
+        const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
+        if (!SmartAccountId) {
+            return res.status(404).json({ error: 'Smart account not found' });
+        }
+
+        const result = await db.query(
+            'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
+            [SmartAccountId, name, description, status, latitude, longitude]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Error creating voucher:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 };
-exports.getVoucherById = async (req, res) => {
+
+export const getVoucherById = async (req, res) => {
     const { voucher_id } = req.params;
     try {
         const result = await db.query(
@@ -62,9 +57,7 @@ exports.getVoucherById = async (req, res) => {
     }
 };
 
-
-
-exports.updateVoucher = async (req, res) => {
+export const updateVoucher = async (req, res) => {
     const { voucher_id } = req.params;
     const { description, name, status, latitude, longitude } = req.body;
     try {
@@ -83,8 +76,7 @@ exports.updateVoucher = async (req, res) => {
     }
 };
 
-
-exports.deleteVoucher = async (req, res) => {
+export const deleteVoucher = async (req, res) => {
     const { voucher_id } = req.params;
     try {
         const result = await db.query(
@@ -102,22 +94,20 @@ exports.deleteVoucher = async (req, res) => {
     }
 };
 
-
-exports.getVouchersBySmartAccountId = async (req, res) => {
+export const getVouchersBySmartAccountId = async (req, res) => {
     const { encrypted_wallet } = req.params;
     try {
         if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
             console.error('Invalid encrypted wallet data:', encrypted_wallet);
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
-    
-        
+
         const signerInstance = getSigner(encrypted_wallet);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
-    
+
         const wallet_address = signerInstance.address;
         const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
         if (!SmartAccountId) {
@@ -144,23 +134,20 @@ exports.getVouchersBySmartAccountId = async (req, res) => {
     }
 };
 
-
-
-exports.getVouchersBySmartAccountId_Status = async (req, res) => {
-    const { encrypted_wallet, status } = req.params;
+export const getVouchersBySmartAccountId_Status = async (req, res) => {
+    const { encrypted_wallet, status } = req.body;
     try {
         if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
             console.error('Invalid encrypted wallet data:', encrypted_wallet);
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
-    
-        
+
         const signerInstance = getSigner(encrypted_wallet);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
-    
+
         const wallet_address = signerInstance.address;
         const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
         if (!SmartAccountId) {
@@ -186,7 +173,8 @@ exports.getVouchersBySmartAccountId_Status = async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 };
-exports.getVouchersByLocationAndRadius = async (req, res) => {
+
+export const getVouchersByLocationAndRadius = async (req, res) => {
     const { latitude, longitude, status, radius } = req.body;
     if (!latitude || !longitude || !status || !radius) {
         return res.status(400).json({ error: 'Latitude, longitude, status, and radius are required' });
@@ -221,10 +209,8 @@ exports.getVouchersByLocationAndRadius = async (req, res) => {
     }
 };
 
-
-exports.updateVoucherStatus = async (req, res) => {
-    const { voucher_id } = req.params;
-    const { status } = req.body;
+export const updateVoucherStatus = async (req, res) => {
+    const { status ,voucher_id} = req.body;
 
     const validStatuses = ['pending', 'available', 'unavailable', 'banned'];
     if (!validStatuses.includes(status)) {
@@ -247,8 +233,7 @@ exports.updateVoucherStatus = async (req, res) => {
     }
 };
 
-
-exports.getCollectedVouchers = async (req, res) => {
+export const getCollectedVouchers = async (req, res) => {
     const { encrypted_wallet } = req.body;
 
     if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
@@ -256,7 +241,6 @@ exports.getCollectedVouchers = async (req, res) => {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
 
-    
     const signerInstance = getSigner(encrypted_wallet);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
         console.error('Invalid or undefined signer address:', signerInstance);
@@ -266,12 +250,10 @@ exports.getCollectedVouchers = async (req, res) => {
     const wallet_address = signerInstance.address;
     try {
         const smartAccountAddress = await fetchSmartAccountByWalletAddress(wallet_address);
-        console.log(smartAccountAddress);
-
         if (!smartAccountAddress) {
             return res.status(404).json({ error: 'Smart account not found for the given wallet address' });
         }
-        console.log(smartAccountAddress);
+
         const result = await db.query(
             `SELECT m.*, v.*, json_agg(nm.*) AS nft_metadata
              FROM account_abstraction.nft_tx_mint m
@@ -281,8 +263,6 @@ exports.getCollectedVouchers = async (req, res) => {
              GROUP BY m.id, v.id`,
             [smartAccountAddress]
         );
-
-        // console.log(result)
 
         if (result.rows.length > 0) {
             res.status(200).json(result.rows);

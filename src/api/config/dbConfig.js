@@ -1,4 +1,5 @@
-const { Pool } = require('pg');
+import pg from 'pg';
+const { Pool } = pg;
 
 const pool = new Pool({
   user: 'docker',
@@ -8,4 +9,4 @@ const pool = new Pool({
   port: 5433,
 });
 
-module.exports = pool;
+export default pool;
