@@ -6,7 +6,8 @@ import db from '../config/dbConfig.js';
 import { fetchSmartAccountIDBySmartAccountAddress, fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
 
 export const generateQRData = async (req, res) => {
-    const { encrypted_wallet, voucherId, tokenId, amount } = req.body;
+    const { voucherId, tokenId, amount } = req.body;
+    const { encrypted_wallet } = req.auth;
 
     // Validate the encrypted wallet data
     if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
@@ -52,7 +53,8 @@ export const generateQRData = async (req, res) => {
 };
 
 export const decryptAndRevoke = async (req, res) => {
-    const { encrypted_wallet, encryptedData, qrDataId } = req.body;
+    const { encryptedData, qrDataId } = req.body;
+    const { encrypted_wallet } = req.auth;
 
     if (!encryptedData || !qrDataId) {
         return res.status(400).json({ error: 'Missing required parameters' });

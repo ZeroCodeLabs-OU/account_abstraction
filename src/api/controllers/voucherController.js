@@ -1,10 +1,13 @@
 import db from '../config/dbConfig.js';
-import { fetchBaseURI, fetchAccountIdByWalletAddress, fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress } from '../utils/db_helper.js';
+import { fetchBaseURI, fetchAccountIdByWalletAddress, fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress ,fetchUIDByWalletAddress,getUidUsingVoucherId} from '../utils/db_helper.js';
 import { getSigner } from "../services/biconomyService.js";
 import { ethers } from 'ethers';
 
+
 export const createVoucher = async (req, res) => {
-    const { encrypted_wallet, description, name, status, latitude, longitude } = req.body;
+    const {  encrypted_wallet } = req.auth;
+    const { description, name, status, latitude, longitude } = req.body;
+
     try {
         if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
             console.error('Invalid encrypted wallet data:', encrypted_wallet);
@@ -22,12 +25,12 @@ export const createVoucher = async (req, res) => {
         if (!SmartAccountId) {
             return res.status(404).json({ error: 'Smart account not found' });
         }
-
+        const uid = await fetchUIDByWalletAddress(wallet_address)
         const result = await db.query(
             'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
             [SmartAccountId, name, description, status, latitude, longitude]
         );
-        res.status(201).json(result.rows[0]);
+        res.status(201).json({ ...result.rows[0], uid });
     } catch (error) {
         console.error('Error creating voucher:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -36,6 +39,7 @@ export const createVoucher = async (req, res) => {
 
 export const getVoucherById = async (req, res) => {
     const { voucher_id } = req.params;
+
     try {
         const result = await db.query(
             `SELECT v.*, 
@@ -46,8 +50,10 @@ export const getVoucherById = async (req, res) => {
              GROUP BY v.id`,
             [voucher_id]
         );
+
         if (result.rows.length) {
-            res.status(200).json(result.rows[0]);
+            const uid = await getUidUsingVoucherId(voucher_id);
+            res.status(200).json({ ...result.rows[0], uid });
         } else {
             res.status(404).send('Voucher not found.');
         }
@@ -60,13 +66,16 @@ export const getVoucherById = async (req, res) => {
 export const updateVoucher = async (req, res) => {
     const { voucher_id } = req.params;
     const { description, name, status, latitude, longitude } = req.body;
+
     try {
         const result = await db.query(
             'UPDATE account_abstraction.voucher SET name = $1, description = $2, status = $3, location = ST_SetSRID(ST_MakePoint($4, $5), 4326), latitude = $4, longitude = $5 WHERE id = $6 RETURNING *',
             [name, description, status, latitude, longitude, voucher_id]
         );
+
         if (result.rows.length) {
-            res.status(200).json(result.rows[0]);
+            const uid = await getUidUsingVoucherId(voucher_id);
+            res.status(200).json({ ...result.rows[0], uid });
         } else {
             res.status(404).send('Voucher not found.');
         }
@@ -76,13 +85,16 @@ export const updateVoucher = async (req, res) => {
     }
 };
 
+
 export const deleteVoucher = async (req, res) => {
     const { voucher_id } = req.params;
+
     try {
         const result = await db.query(
             'DELETE FROM account_abstraction.voucher WHERE id = $1',
             [voucher_id]
         );
+
         if (result.rowCount > 0) {
             res.status(204).send();
         } else {
@@ -94,8 +106,10 @@ export const deleteVoucher = async (req, res) => {
     }
 };
 
+
 export const getVouchersBySmartAccountId = async (req, res) => {
-    const { encrypted_wallet } = req.params;
+    const { encrypted_wallet } = req.auth;
+
     try {
         if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
             console.error('Invalid encrypted wallet data:', encrypted_wallet);
@@ -123,8 +137,13 @@ export const getVouchersBySmartAccountId = async (req, res) => {
              GROUP BY v.id`,
             [SmartAccountId]
         );
+
         if (result.rows.length > 0) {
-            res.status(200).json(result.rows);
+            const vouchersWithUid = await Promise.all(result.rows.map(async (voucher) => {
+                const uid = await getUidUsingVoucherId(voucher.id);
+                return { ...voucher, uid };
+            }));
+            res.status(200).json(vouchersWithUid);
         } else {
             res.status(404).send('No vouchers found for this smart account.');
         }
@@ -134,8 +153,11 @@ export const getVouchersBySmartAccountId = async (req, res) => {
     }
 };
 
+
 export const getVouchersBySmartAccountId_Status = async (req, res) => {
-    const { encrypted_wallet, status } = req.body;
+    const { encrypted_wallet } = req.auth;
+    const { status } = req.body;
+
     try {
         if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
             console.error('Invalid encrypted wallet data:', encrypted_wallet);
@@ -163,8 +185,13 @@ export const getVouchersBySmartAccountId_Status = async (req, res) => {
              GROUP BY v.id`,
             [SmartAccountId, status]
         );
+
         if (result.rows.length > 0) {
-            res.status(200).json(result.rows);
+            const vouchersWithUid = await Promise.all(result.rows.map(async (voucher) => {
+                const uid = await getUidUsingVoucherId(voucher.id);
+                return { ...voucher, uid };
+            }));
+            res.status(200).json(vouchersWithUid);
         } else {
             res.status(404).send('No vouchers found for this smart account.');
         }
@@ -176,6 +203,7 @@ export const getVouchersBySmartAccountId_Status = async (req, res) => {
 
 export const getVouchersByLocationAndRadius = async (req, res) => {
     const { latitude, longitude, status, radius } = req.body;
+
     if (!latitude || !longitude || !status || !radius) {
         return res.status(400).json({ error: 'Latitude, longitude, status, and radius are required' });
     }
@@ -194,12 +222,16 @@ export const getVouchersByLocationAndRadius = async (req, res) => {
                  $4
              )
              GROUP BY v.id
-             ORDER BY distance ASC`, // Order by distance in ascending order
+             ORDER BY distance ASC`,
             [latitude, longitude, status, radius]
         );
 
         if (result.rows.length > 0) {
-            res.status(200).json(result.rows);
+            const vouchersWithUid = await Promise.all(result.rows.map(async (voucher) => {
+                const uid = await getUidUsingVoucherId(voucher.id);
+                return { ...voucher, uid };
+            }));
+            res.status(200).json(vouchersWithUid);
         } else {
             res.status(404).send('No vouchers found within the specified radius.');
         }
@@ -210,7 +242,7 @@ export const getVouchersByLocationAndRadius = async (req, res) => {
 };
 
 export const updateVoucherStatus = async (req, res) => {
-    const { status ,voucher_id} = req.body;
+    const { status, voucher_id } = req.body;
 
     const validStatuses = ['pending', 'available', 'unavailable', 'banned'];
     if (!validStatuses.includes(status)) {
@@ -222,8 +254,10 @@ export const updateVoucherStatus = async (req, res) => {
             'UPDATE account_abstraction.voucher SET status = $1 WHERE id = $2 RETURNING *',
             [status, voucher_id]
         );
+
         if (result.rows.length) {
-            res.status(200).json(result.rows[0]);
+            const uid = await getUidUsingVoucherId(voucher_id);
+            res.status(200).json({ ...result.rows[0], uid });
         } else {
             res.status(404).send('Voucher not found.');
         }
@@ -234,7 +268,7 @@ export const updateVoucherStatus = async (req, res) => {
 };
 
 export const getCollectedVouchers = async (req, res) => {
-    const { encrypted_wallet } = req.body;
+    const { encrypted_wallet } = req.auth;
 
     if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
         console.error('Invalid encrypted wallet data:', encrypted_wallet);
@@ -248,6 +282,7 @@ export const getCollectedVouchers = async (req, res) => {
     }
 
     const wallet_address = signerInstance.address;
+
     try {
         const smartAccountAddress = await fetchSmartAccountByWalletAddress(wallet_address);
         if (!smartAccountAddress) {
@@ -265,7 +300,11 @@ export const getCollectedVouchers = async (req, res) => {
         );
 
         if (result.rows.length > 0) {
-            res.status(200).json(result.rows);
+            const vouchersWithUid = await Promise.all(result.rows.map(async (voucher) => {
+                const uid = await getUidUsingVoucherId(voucher.id);
+                return { ...voucher, uid };
+            }));
+            res.status(200).json(vouchersWithUid);
         } else {
             res.status(404).send('No collected vouchers found for this wallet address.');
         }

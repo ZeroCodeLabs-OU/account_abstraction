@@ -53,7 +53,7 @@ async function processFiles(images, metadataFiles, voucherId) {
         
                 // Upload Image to IPFS
                 const ipfsImageUrl = await uploadToIPFSAndPin(image.buffer, `${image.originalname}`);
-        
+                
                 // Upload Image to Firebase Storage
                 const firebaseStoragePath = `${image.originalname}`;
                 const firebaseFile = bucket.file(firebaseStoragePath);
@@ -62,10 +62,11 @@ async function processFiles(images, metadataFiles, voucherId) {
         
                 // Prepare and Update Metadata
                 const metadataContent = JSON.parse(metadataFile.buffer.toString());
-                metadataContent.media = ipfsImageUrl;  // Add IPFS image link to metadata
-        
+                metadataContent.image = ipfsImageUrl;  // Add IPFS image link to metadata
+                metadataContent.tokenId = tokenId;  // Add IPFS image link to metadata
+
                 const updatedMetadataBuffer = Buffer.from(JSON.stringify(metadataContent));
-                const metadataPath = `${tokenId}.json`; // Rename metadata file based on tokenId
+                const metadataPath = `${tokenId}`; // Rename metadata file based on tokenId
                 const ipfsMetadataUrl = await uploadToIPFSAndPin(updatedMetadataBuffer, metadataPath);
                 const metadataId = await insertNFTMetadata(voucherId, tokenId, publicUrl, metadataContent);
 
@@ -82,7 +83,7 @@ async function processFiles(images, metadataFiles, voucherId) {
             let baseURI = '';
             for await (const response of directoryResponse) {
                 if (response.path === '') {
-                    baseURI = `https://jmakwana101.infura-ipfs.io/ipfs/${response.cid}`;
+                    baseURI = `https://zero-code-io.infura-ipfs.io/ipfs/${response.cid}/`;
                     break;
                 }
             }

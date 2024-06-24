@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { processFiles } from './src/api/services/firestorage.js';
-
+import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
 import {
   createVoucher, 
   getVoucherById, 
@@ -16,7 +16,7 @@ import {
   updateVoucherStatus, 
   getCollectedVouchers 
 } from './src/api/controllers/voucherController.js';
-import { getSmartAccount, createSmartAccount } from './src/api/controllers/walletController.js';
+import { getSmartAccount, createSmartAccount ,createAndDeploySmartAccount} from './src/api/controllers/walletController.js';
 import {
   deploySmartContract,
   mintTokens,
@@ -32,48 +32,40 @@ app.get('/', (req, res) => {
 });
 
 // Smart account
-app.post('/createSmartAccount', createSmartAccount);
-  app.get('/getSmartAccount', getSmartAccount);
+app.post('/createSmartAccount',authenticateToken, createSmartAccount);
+  app.get('/getSmartAccount', authenticateToken,getSmartAccount);
 
   // voucher
-  app.post('/create_voucher', createVoucher);
-  app.get('/get_voucher/:voucher_id', getVoucherById);
-  app.put('/update_voucher/:voucher_id', updateVoucher);
-  app.delete('/delete_voucher/:voucher_id', deleteVoucher);
-  app.get('/vouchers_by_wallet_address/:wallet_address', getVouchersBySmartAccountId);
-  app.post('/vouchers/vouchers_by_status/:voucher_id', updateVoucherStatus);
-  app.get('/vouchers/vouchers_by_status', getVouchersBySmartAccountId_Status);
-  app.get('/vouchers/by-location', getVouchersByLocationAndRadius);
-  app.get('/vouchers/collected', getCollectedVouchers);
+  app.post('/create_voucher',authenticateToken, createVoucher);
+  app.get('/get_voucher/:voucher_id',authenticateToken, getVoucherById);
+  app.put('/update_voucher/:voucher_id',authenticateToken ,updateVoucher);
+  app.delete('/delete_voucher/:voucher_id',authenticateToken, deleteVoucher);
+  app.get('/vouchers_by_wallet_address/:wallet_address',authenticateToken ,getVouchersBySmartAccountId);
+  app.post('/vouchers/vouchers_by_status/:voucher_id',authenticateToken, updateVoucherStatus);
+  app.get('/vouchers/vouchers_by_status',authenticateToken, getVouchersBySmartAccountId_Status);
+  app.get('/vouchers/by-location',authenticateToken, getVouchersByLocationAndRadius);
+  app.get('/vouchers/collected',authenticateToken, getCollectedVouchers);
 
-  // contract interaction
-  app.post('/deploy_contract', deploySmartContract);
-  app.post('/mint', mintTokens);
-  app.post('/revoke', revokeTokens);
+  // contract interaction,
+  app.post('/deploy_contract',authenticateToken, deploySmartContract);
+  app.post('/mint',authenticateToken, mintTokens);
+  app.post('/revoke',authenticateToken, revokeTokens);
 
   // QR
-  app.post('/generate-qr-data', generateQRData);
-  app.post('/decrypt-and-revoke', decryptAndRevoke);
+  app.post('/generate-qr-data',authenticateToken, generateQRData);
+  app.post('/decrypt-and-revoke',authenticateToken, decryptAndRevoke);
 
-  app.post('/uploadNFT', upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), async (req, res) => {
-    try {
-        const images = req.files['images'] || [];
-        const metadataFiles = req.files['metadata'] || [];
-        const voucherId = req.body.voucherId;  
+  //Combined endpoint
+  app.post('/complete-process',authenticateToken, upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), createAndDeploySmartAccount);
 
-        if (!voucherId) {
-            return res.status(400).send("Voucher ID is required.");
-        }
 
-        const { baseURI, firebaseImageUrls } = await processFiles(images, metadataFiles, voucherId);
 
-        res.status(200).json({ baseURI, firebaseImageUrls });
-    } catch (error) {
-        console.error('Error processing files:', error);
-        res.status(500).send('Error processing NFT data.');
-    }
+// Error handling for unauthorized access
+app.use((err, req, res, next) => {
+  if (err.name === 'UnauthorizedError') {
+    res.status(401).send('Unauthorized: No token provided or token was invalid');
+  }
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -1,11 +1,11 @@
 import db from '../config/dbConfig.js';
 
 async function fetchBaseURI(voucherId) {
-  const query = 'SELECT files_cid FROM account_abstraction.nft_cid WHERE voucher_id = $1';
+  const query = 'SELECT base_uri FROM account_abstraction.nft_cid WHERE voucher_id = $1';
   try {
     const result = await db.query(query, [voucherId]);
     if (result.rows.length > 0) {
-      return `https://ipfs.io/ipfs/${result.rows[0].metadata_cid}`;
+      return result.rows[0].base_uri;
     } else {
       throw new Error("No CID found for the given voucher ID");
     }
@@ -213,7 +213,40 @@ async function insertBaseURI(voucherId, baseUri) {
   }
 }
 
-// Updated proc
+async function getUidUsingVoucherId(voucherId) {
+  const query = `
+      SELECT sa.uid
+      FROM account_abstraction.voucher v
+      JOIN account_abstraction.smart_account sa ON v.smart_account_id = sa.id
+      WHERE v.id = $1;
+  `;
+  try {
+      const result = await db.query(query, [voucherId]);
+      if (result.rows.length > 0) {
+          return result.rows[0].uid;
+      } else {
+          throw new Error("No UID found for the given voucher ID");
+      }
+  } catch (err) {
+      console.error("Database error while fetching UID:", err);
+      throw err;
+  }
+}
+
+async function fetchUIDByWalletAddress(walletAddress) {
+  const query = 'SELECT id FROM account_abstraction.uid WHERE wallet_address = $1';
+  try {
+    const result = await db.query(query, [walletAddress]);
+    if (result.rows.length > 0) {
+      return result.rows[0].id;
+    } else {
+      throw new Error("No account found for the given wallet address");
+    }
+  } catch (err) {
+    console.error("Database error while fetching account id:", err);
+    throw err;
+  }
+}
 
 export {
   fetchBaseURI,
@@ -223,5 +256,5 @@ export {
   recordMintTransaction,
   recordRevokeTransaction,
   getContractAddressByVoucherId,
-  fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI
+  fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI,getUidUsingVoucherId,fetchUIDByWalletAddress
 };

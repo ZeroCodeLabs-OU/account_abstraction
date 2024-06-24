@@ -11,14 +11,15 @@ import {
   createSmartAccountContract,
   recordMintTransaction,
   recordRevokeTransaction,
-  getContractAddressByVoucherId
+  getContractAddressByVoucherId,getUidUsingVoucherId
 } from '../utils/db_helper.js';
 
 const { abi, bytecode } = contractJson;
 import { encodeInitializationData } from '../utils/contractImplementation.js';
 
 export const deploySmartContract = async (req, res) => {
-  const { encrypted_wallet, voucherId, name, max_supply, tokenQuantity, max_token_per_mint, max_token_per_person } = req.body;
+  const { voucherId, name, max_supply, tokenQuantity, max_token_per_mint, max_token_per_person } = req.body;
+  const { encrypted_wallet } = req.auth;
 
   if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
     console.error('Invalid encrypted wallet data:', encrypted_wallet);
@@ -134,9 +135,12 @@ export const deploySmartContract = async (req, res) => {
       externalContract: false
     });
 
+    const uid = await getUidUsingVoucherId(voucherId);
+
     res.status(200).json({
       message: "Contract deployed and initialized successfully",
-      ContractResponse
+      ContractResponse,
+      uid
     });
   } catch (error) {
     console.error('Error deploying smart contract:', error);
@@ -148,7 +152,8 @@ export const deploySmartContract = async (req, res) => {
 };
 
 export const mintTokens = async (req, res) => {
-  const { encrypted_wallet, voucherId, id, amount = 1, tokenIndex = 1 } = req.body;
+  const { voucherId, id, amount = 1, tokenIndex = 1 } = req.body;
+  const { encrypted_wallet } = req.auth;
   const data = "0x00";
 
   console.log('Received request body:', req.body);
@@ -197,9 +202,12 @@ export const mintTokens = async (req, res) => {
     await recordMintTransaction(voucherId, id, smartAccountAddress);
     console.log('Mint transaction recorded in database.');
 
+    const uid = await getUidUsingVoucherId(voucherId);
+
     res.status(200).json({
       message: "Tokens minted successfully",
-      txReceipt
+      txReceipt,
+      uid
     });
   } catch (error) {
     console.error('Error minting tokens:', error);
@@ -211,7 +219,8 @@ export const mintTokens = async (req, res) => {
 };
 
 export const revokeTokens = async (req, res) => {
-  const { encrypted_wallet, voucherId, id, amount } = req.body;
+  const { voucherId, id, amount } = req.body;
+  const { encrypted_wallet } = req.auth;
 
   console.log('Received request body:', req.body);
 
@@ -259,9 +268,12 @@ export const revokeTokens = async (req, res) => {
     await recordRevokeTransaction(voucherId, id, smartAccountAddress);
     console.log('Revoke transaction recorded in database.');
 
+    const uid = await getUidUsingVoucherId(voucherId);
+
     res.status(200).json({
       message: "Tokens revoked successfully",
-      txReceipt
+      txReceipt,
+      uid
     });
   } catch (error) {
     console.error('Error revoking tokens:', error);

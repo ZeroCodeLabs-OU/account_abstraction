@@ -15,7 +15,7 @@ const client = create({
 export async function uploadToIPFSAndPin(buffer, filename) {
     try {
         const added = await client.add({ content: buffer }, { pin: true, wrapWithDirectory: false });
-        const fileUrl = `https://jmakwana101.infura-ipfs.io/ipfs/${added.cid}`;
+        const fileUrl = `https://zero-code-io.infura-ipfs.io/ipfs/${added.cid}`;
         return fileUrl;  
     } catch (error) {
         console.error('Failed to upload and pin to IPFS:', error);
