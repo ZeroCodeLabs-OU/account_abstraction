@@ -1,4 +1,5 @@
-const contractJson = require('../utils/contracts/erc1155.json');
+import contractJson from '../utils/contracts/erc1155.json' assert {type: 'json'};
+
 const { abi, bytecode } = contractJson;
 
 const iface = new ethers.utils.Interface(abi);
