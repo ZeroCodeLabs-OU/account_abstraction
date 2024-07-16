@@ -13,8 +13,8 @@ RUN npm install
 # Bundle app source
 COPY . .
 
-# Expose port 8080
-EXPOSE 8080
+# Expose port 9000
+EXPOSE 9000
 
 # Start the app
 CMD ["node", "app.js"]
