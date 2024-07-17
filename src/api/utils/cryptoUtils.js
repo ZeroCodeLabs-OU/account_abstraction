@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { ethers } from 'ethers';
-
+import dotenv from 'dotenv';
+dotenv.config();
 const key = process.env.ENCRYPTION_KEY;
 
 // Decryption function

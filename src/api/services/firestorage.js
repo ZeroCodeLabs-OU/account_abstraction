@@ -1,6 +1,8 @@
 import { bucket } from '../config/firebaseAdmin.js';
 import { create } from 'ipfs-http-client';
 import {uploadToIPFSAndPin} from "./ipfsService.js";
+import dotenv from 'dotenv';
+dotenv.config();
 import {insertNFTMetadata,insertBaseURI,insertOrUpdateNFTMetadata} from "../utils/db_helper.js";
 const infuraPublic=process.env.INFURA_PROJECT_ID
 const infuraPrivate=process.env.INFURA_PROJECT_SECRET

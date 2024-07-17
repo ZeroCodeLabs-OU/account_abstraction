@@ -1,5 +1,7 @@
 import { expressjwt as jwt } from 'express-jwt';
 import { expressJwtSecret } from 'jwks-rsa';
+import dotenv from 'dotenv';
+await dotenv.config();
 
 export const authenticateToken = jwt({
   secret: expressJwtSecret({

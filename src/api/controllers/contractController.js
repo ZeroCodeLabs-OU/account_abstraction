@@ -3,7 +3,8 @@ import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@bicon
 import { getSigner } from '../services/biconomyService.js';
 import db from '../config/dbConfig.js';
 import contractJson from '../utils/contracts/erc1155.json' assert { type: 'json' };
-
+import dotenv from 'dotenv';
+dotenv.config();
 import {
   fetchBaseURI,
   fetchAccountIdByWalletAddress,

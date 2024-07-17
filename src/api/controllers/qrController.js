@@ -4,7 +4,8 @@ import { ethers } from 'ethers';
 import crypto from 'crypto';
 import db from '../config/dbConfig.js';
 import { fetchSmartAccountIDBySmartAccountAddress, fetchSmartAccountByWalletAddress,fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
-
+import dotenv from 'dotenv';
+dotenv.config();
 export const generateQRData = async (req, res) => {
     const { voucherId, tokenId=0, amount } = req.body;
     const { wallet_data } = req.auth;

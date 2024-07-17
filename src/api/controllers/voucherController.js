@@ -4,7 +4,8 @@ import { getSigner } from "../services/biconomyService.js";
 import { ethers } from 'ethers';
 import {update_processFiles} from "../services/firestorage.js"
 import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@biconomy/account';
-
+import dotenv from 'dotenv';
+dotenv.config();
 export const createVoucher = async (req, res) => {
     const {  wallet_data } = req.auth;
     const { description, name, status, latitude, longitude } = req.body;
