@@ -34,7 +34,7 @@ app.use(morgan('dev'));
 
 // Smart account
 app.post('/createSmartAccount',authenticateToken, createSmartAccount);
-app.get('/getSmartAccount',getSmartAccount);
+app.get('/getSmartAccount',authenticateToken,getSmartAccount);
 app.post('/api/jwt', authenticateToken, (req, res) => {
   res.json(req.auth);
 });
