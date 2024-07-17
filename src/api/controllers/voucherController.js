@@ -1,20 +1,20 @@
 import db from '../config/dbConfig.js';
-import { fetchBaseURI, fetchAccountIdByWalletAddress, fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress ,fetchUIDByWalletAddress,getUidUsingVoucherId} from '../utils/db_helper.js';
+import { fetchBaseURI, fetchAccountIdByWalletAddress,updateBaseURI,getContractAddressByVoucherId,update_Voucher, insertOrUpdateNFTMetadata,fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress ,fetchUIDByWalletAddress,getUidUsingVoucherId} from '../utils/db_helper.js';
 import { getSigner } from "../services/biconomyService.js";
 import { ethers } from 'ethers';
-
+import {update_processFiles} from "../services/firestorage.js"
+import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@biconomy/account';
 
 export const createVoucher = async (req, res) => {
-    const {  encrypted_wallet } = req.auth;
+    const {  wallet_data } = req.auth;
     const { description, name, status, latitude, longitude } = req.body;
 
     try {
-        if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-            console.error('Invalid encrypted wallet data:', encrypted_wallet);
+        if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
 
-        const signerInstance = getSigner(encrypted_wallet);
+        const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -108,15 +108,14 @@ export const deleteVoucher = async (req, res) => {
 
 
 export const getVouchersBySmartAccountId = async (req, res) => {
-    const { encrypted_wallet } = req.auth;
+    const { wallet_data } = req.auth;
 
     try {
-        if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-            console.error('Invalid encrypted wallet data:', encrypted_wallet);
+        if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
 
-        const signerInstance = getSigner(encrypted_wallet);
+        const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -155,16 +154,15 @@ export const getVouchersBySmartAccountId = async (req, res) => {
 
 
 export const getVouchersBySmartAccountId_Status = async (req, res) => {
-    const { encrypted_wallet } = req.auth;
+    const { wallet_data } = req.auth;
     const { status } = req.body;
 
     try {
-        if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-            console.error('Invalid encrypted wallet data:', encrypted_wallet);
+        if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
 
-        const signerInstance = getSigner(encrypted_wallet);
+        const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -268,14 +266,13 @@ export const updateVoucherStatus = async (req, res) => {
 };
 
 export const getCollectedVouchers = async (req, res) => {
-    const { encrypted_wallet } = req.auth;
+    const { wallet_data } = req.auth;
 
-    if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-        console.error('Invalid encrypted wallet data:', encrypted_wallet);
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
 
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
         console.error('Invalid or undefined signer address:', signerInstance);
         return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -311,5 +308,75 @@ export const getCollectedVouchers = async (req, res) => {
     } catch (error) {
         console.error('Error retrieving collected vouchers:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+
+export const updateVoucherAndMetadata = async (req, res) => {
+    const { voucher_id, name, description, status, latitude, longitude } = req.body;
+    const { wallet_data } = req.auth;
+    const images = req.files['images'] || [];
+    const metadataFiles = req.files['metadata'] || [];
+
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
+        return res.status(400).json({ error: 'Invalid encrypted wallet data' });
+    }
+
+    try {
+        const signerInstance = getSigner(wallet_data);
+        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
+            console.error('Invalid or undefined signer address:', signerInstance);
+            return res.status(400).json({ error: 'Invalid or undefined signer address' });
+        }
+
+        // Update voucher
+        const updatedVoucher = await update_Voucher(voucher_id, { name, description, status, latitude, longitude });
+
+        // Update metadata if provided
+        if (images.length > 0 && metadataFiles.length > 0) {
+            const { baseURI, firebaseImageUrls } = await update_processFiles(images, metadataFiles, voucher_id);
+            await updateBaseURI(voucher_id, baseURI);
+
+            // const contractAddress = await getContractAddressByVoucherId(voucher_id);
+            // const updateMetadataFunctionData = new ethers.Interface([
+            //     "function metadata_update(string memory _baseURI) public onlyRole(ADMIN_ROLE)"
+            // ]).encodeFunctionData("metadata_update", [baseURI]);
+
+
+            // const tx = {
+            //     to: contractAddress,
+            //     data: updateMetadataFunctionData
+            // };
+
+            // const biconomySmartAccount = await createSmartAccountClient({
+            //     signer: signerInstance,
+            //     biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
+            //     bundlerUrl: process.env.BUNDLER_URL
+            // });
+
+            // const txResponse = await biconomySmartAccount.sendTransaction(tx, {
+            //     paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+            // });
+            // const txReceipt = await txResponse.wait();
+
+            // if (!txReceipt.success) {
+            //     throw new Error('Metadata update transaction failed');
+            // }
+
+            res.status(200).json({
+                message: "Voucher and metadata updated successfully",
+                updatedVoucher,
+                baseURI,
+                firebaseImageUrls
+            });
+        } else {
+            res.status(200).json({
+                message: "Voucher updated successfully",
+                updatedVoucher
+            });
+        }
+    } catch (error) {
+        console.error('Error updating voucher and metadata:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 };

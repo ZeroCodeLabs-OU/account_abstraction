@@ -19,10 +19,9 @@ import { encodeInitializationData } from '../utils/contractImplementation.js';
 
 export const deploySmartContract = async (req, res) => {
   const { voucherId, name, max_supply, tokenQuantity, max_token_per_mint, max_token_per_person } = req.body;
-  const { encrypted_wallet } = req.auth;
+  const { wallet_data } = req.auth;
 
-  if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-    console.error('Invalid encrypted wallet data:', encrypted_wallet);
+  if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
     return res.status(400).json({ error: 'Invalid encrypted wallet data' });
   }
 
@@ -32,7 +31,7 @@ export const deploySmartContract = async (req, res) => {
       paymasterUrl: process.env.PAYMASTER_URL,
     });
 
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
 
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
       console.error('Invalid or undefined signer address:', signerInstance);
@@ -122,7 +121,8 @@ export const deploySmartContract = async (req, res) => {
       baseUri: base_URI,
       tokenSymbol: name.slice(0, 4),
       royaltyShare: 0,
-      maxSupply: max_supply,
+      maxSupply: max_supply, 
+      tokenQuantity : tokenQuantity ,
       teamReserved: 0,
       maxPerPerson: max_token_per_person,
       maxPerTransaction: max_token_per_mint,
@@ -152,19 +152,18 @@ export const deploySmartContract = async (req, res) => {
 };
 
 export const mintTokens = async (req, res) => {
-  const { voucherId, id, amount = 1, tokenIndex = 1 } = req.body;
-  const { encrypted_wallet } = req.auth;
+  const { voucherId, id=0, amount = 1, tokenIndex = 1 } = req.body;
+  const { wallet_data } = req.auth;
   const data = "0x00";
 
   console.log('Received request body:', req.body);
 
-  if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-    console.error('Invalid encrypted wallet data:', encrypted_wallet);
+  if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
     return res.status(400).json({ error: 'Invalid encrypted wallet data' });
   }
 
   try {
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
       console.error('Invalid or undefined signer address:', signerInstance);
       return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -206,8 +205,9 @@ export const mintTokens = async (req, res) => {
 
     res.status(200).json({
       message: "Tokens minted successfully",
-      txReceipt,
-      uid
+      "txReceipt":txReceipt,
+      "voucherId":voucherId,
+      "uid":uid
     });
   } catch (error) {
     console.error('Error minting tokens:', error);
@@ -220,17 +220,16 @@ export const mintTokens = async (req, res) => {
 
 export const revokeTokens = async (req, res) => {
   const { voucherId, id, amount } = req.body;
-  const { encrypted_wallet } = req.auth;
+  const { wallet_data } = req.auth;
 
   console.log('Received request body:', req.body);
 
-  if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-    console.error('Invalid encrypted wallet data:', encrypted_wallet);
+  if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
     return res.status(400).json({ error: 'Invalid encrypted wallet data' });
   }
 
   try {
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
       console.error('Invalid or undefined signer address:', signerInstance);
       return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -272,8 +271,9 @@ export const revokeTokens = async (req, res) => {
 
     res.status(200).json({
       message: "Tokens revoked successfully",
-      txReceipt,
-      uid
+      "txReceipt":txReceipt,
+      "voucherId":voucherId,
+      "uid":uid
     });
   } catch (error) {
     console.error('Error revoking tokens:', error);

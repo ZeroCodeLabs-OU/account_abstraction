@@ -86,7 +86,7 @@ async function createSmartAccountContract({
   baseUri,
   tokenSymbol,
   royaltyShare,
-  maxSupply,
+  maxSupply,tokenQuantity,
   teamReserved,
   maxPerPerson,
   maxPerTransaction,
@@ -104,11 +104,11 @@ async function createSmartAccountContract({
       smart_account_id, voucher_id, name, description, contract_address, chain, type, base_uri,
       token_symbol, royalty_share, max_supply, team_reserved, max_per_person, max_per_transaction,
       presale_mint_start_date, public_mint_start_date, prereveal_base_uri, sbt_activated,
-      is_gasless, is_archived, external_contract
+      is_gasless, is_archived, external_contract,tokenQuantity 
     )
     VALUES
     (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
     )
     RETURNING id;
   `;
@@ -134,7 +134,8 @@ async function createSmartAccountContract({
     sbtActivated || false, // Default to false if not provided
     isGasless || false, // Default to false if not provided
     isArchived || false, // Default to false if not provided
-    externalContract || false // Default to false if not provided
+    externalContract || false ,// Default to false if not provided
+    tokenQuantity 
   ];
 
   try {
@@ -248,6 +249,78 @@ async function fetchUIDByWalletAddress(walletAddress) {
   }
 }
 
+async function update_Voucher(voucherId, { name, description, status, latitude, longitude }) {
+  const fields = [];
+  const values = [];
+  let idx = 1;
+
+  if (name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(name);
+  }
+  if (description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(description);
+  }
+  if (status !== undefined) {
+      fields.push(`status = $${idx++}`);
+      values.push(status);
+  }
+  if (latitude !== undefined && longitude !== undefined) {
+      fields.push(`location = ST_SetSRID(ST_MakePoint($${idx++}, $${idx++}), 4326)`);
+      values.push(latitude, longitude);
+  }
+
+  if (fields.length === 0) {
+      throw new Error('No fields to update');
+  }
+
+  values.push(voucherId);
+
+  const query = `UPDATE account_abstraction.voucher SET ${fields.join(', ')}, updated_at = now() WHERE id = $${idx} RETURNING *`;
+  try {
+      const result = await db.query(query, values);
+      return result.rows[0];
+  } catch (err) {
+      console.error('Database error while updating voucher:', err);
+      throw err;
+  }
+}
+
+async function insertOrUpdateNFTMetadata(voucherId, tokenId, imageUrl, metadata) {
+  const query = `
+      INSERT INTO account_abstraction.nft_metadata (voucher_id, token_id, image_url, metadata, created_at)
+      VALUES ($1, $2, $3, $4, now())
+      ON CONFLICT (voucher_id, token_id) DO UPDATE
+      SET image_url = $3, metadata = $4, updated_at = now()
+      RETURNING id;
+  `;
+  const values = [voucherId, tokenId, imageUrl, metadata];
+  try {
+      const result = await db.query(query, values);
+      return result.rows[0].id;
+  } catch (err) {
+      console.error("Database error while inserting or updating NFT metadata:", err);
+      throw err;
+  }
+}
+async function updateBaseURI(voucherId, baseUri) {
+  const query = `
+      UPDATE account_abstraction.nft_cid
+      SET base_uri = $1, updated_at = now()
+      WHERE voucher_id = $2
+      RETURNING id;
+  `;
+  const values = [baseUri, voucherId];
+  try {
+      const result = await db.query(query, values);
+      return result.rows[0].id;
+  } catch (err) {
+      console.error("Database error while updating base URI:", err);
+      throw err;
+  }
+}
+
 export {
   fetchBaseURI,
   fetchAccountIdByWalletAddress,
@@ -255,6 +328,7 @@ export {
   createSmartAccountContract,
   recordMintTransaction,
   recordRevokeTransaction,
-  getContractAddressByVoucherId,
+  getContractAddressByVoucherId, update_Voucher,
+  insertOrUpdateNFTMetadata,updateBaseURI,
   fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI,getUidUsingVoucherId,fetchUIDByWalletAddress
 };
