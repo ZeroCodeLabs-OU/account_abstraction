@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { decrypt } from '../utils/cryptoUtils.js';
-
+import dotenv from 'dotenv';
+dotenv.config();
 const infuraUrl = process.env.INFURA_PROJECT_URL;
 
 function getSigner(encrypted_wallet) {

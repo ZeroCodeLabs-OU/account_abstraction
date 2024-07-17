@@ -1,7 +1,7 @@
 import { createSmartAccountClient, createPaymaster ,PaymasterMode} from '@biconomy/account';
 import {ethers} from 'ethers';
 import db from '../config/dbConfig.js';
-import { getSigner ,getSigner_} from '../services/biconomyService.js';
+import { getSigner } from '../services/biconomyService.js';
 import contractJson from '../utils/contracts/erc1155.json' assert { type: 'json' };
 const { abi, bytecode } = contractJson;
 import { processFiles } from '../services/firestorage.js';
@@ -16,15 +16,15 @@ import {
   recordRevokeTransaction,
   getContractAddressByVoucherId
 } from '../utils/db_helper.js';
-
+import dotenv from 'dotenv';
+dotenv.config();
 
 
 
 export const createSmartAccount = async (req, res) => {
   try {
-    const { uid, encrypted_wallet } = req.auth;
-
-    if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
+    const { uid, wallet_data } = req.auth;
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
 
@@ -34,7 +34,7 @@ export const createSmartAccount = async (req, res) => {
       strictMode: true,
     });
 
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     const biconomySmartAccount = await createSmartAccountClient({
       signer: signerInstance,
       paymaster,
@@ -70,11 +70,12 @@ export const createSmartAccount = async (req, res) => {
 
 export const getSmartAccount = async (req, res) => {
   try {
-    const { encrypted_wallet } = req.auth;
-    const signerInstance = getSigner(encrypted_wallet);
-    
+    // const { wallet_data } = req.auth;
+    // const signerInstance = getSigner(wallet_data);
+        const { walletAddress } = req.body;
 
-    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [signerInstance.address]);
+
+    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [walletAddress]);
     if (result.rows.length) {
       res.status(200).json(result.rows[0]);
     } else {
@@ -89,12 +90,11 @@ export const getSmartAccount = async (req, res) => {
 export const createAndDeploySmartAccount = async (req, res) => {
   const client = await db.connect();
   try {
-    const { uid, encrypted_wallet } = req.auth;
+    const { uid, wallet_data } = req.auth;
 
     const parseJsonField = (field) => (typeof field === 'string' ? JSON.parse(field) : field);
 
     const { 
-      encryptedData, iv, 
       description, 
       name, 
       status, 
@@ -108,12 +108,10 @@ export const createAndDeploySmartAccount = async (req, res) => {
     const images = req.files['images'] || [];
     const metadataFiles = req.files['metadata'] || [];
 
-    if (!encryptedData || !iv) {
-      res.status(400).json({ error: 'Invalid encrypted wallet data' });
-      return;
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
+      return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     const walletAddress = signerInstance.address;
     const existingAccount = await client.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [walletAddress]);
 
@@ -146,8 +144,8 @@ export const createAndDeploySmartAccount = async (req, res) => {
       bundlerUrl: process.env.BUNDLER_URL,
     });
 
-    const randomSalt = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-    const deployData = new ethers.utils.Interface([
+    const randomSalt = ethers.hexlify(ethers.randomBytes(32));
+    const deployData = new ethers.Interface([
       "function deploy(bytes32 _salt, bytes _creationCode) external returns (address)",
       "function addressOf(bytes32 _salt) external view returns (address)"
     ]).encodeFunctionData("deploy", [randomSalt, bytecode]);
@@ -167,7 +165,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       return;
     }
 
-    const addressData = new ethers.utils.Interface([
+    const addressData = new ethers.Interface([
       'function addressOf(bytes32 _salt) external view returns (address)',
     ]).encodeFunctionData('addressOf', [randomSalt]);
 
@@ -222,6 +220,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       tokenSymbol: name.slice(0, 4),
       royaltyShare: 0,
       maxSupply: max_supply,
+      tokenQuantity : parseJsonField(tokenQuantity),
       teamReserved: 0,
       maxPerPerson: parseJsonField(max_token_per_person),
       maxPerTransaction: parseJsonField(max_token_per_mint),
@@ -236,7 +235,9 @@ export const createAndDeploySmartAccount = async (req, res) => {
 
     res.status(200).json({
       message: "Smart account and contract deployed successfully",
-      contractResponse
+      "smart_contract_id":contractResponse,
+      "voucherId":voucherId,
+      "uid":uid
     });
   } catch (error) {
     console.error('Error in execution:', error);
@@ -246,6 +247,4 @@ export const createAndDeploySmartAccount = async (req, res) => {
   }
 };
 
-// add uid return to all endpoints
-//update contract changes
-//update voucher and ipfs endpoint 
+

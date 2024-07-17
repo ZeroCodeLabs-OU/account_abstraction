@@ -1,9 +1,9 @@
-import express from 'express';
-import multer from 'multer';
 import dotenv from 'dotenv';
 dotenv.config();
+import morgan from 'morgan';
+import express from 'express';
+import multer from 'multer';
 
-import { processFiles } from './src/api/services/firestorage.js';
 import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
 import {
   createVoucher, 
@@ -14,7 +14,7 @@ import {
   getVouchersBySmartAccountId_Status, 
   getVouchersByLocationAndRadius, 
   updateVoucherStatus, 
-  getCollectedVouchers 
+  getCollectedVouchers ,updateVoucherAndMetadata
 } from './src/api/controllers/voucherController.js';
 import { getSmartAccount, createSmartAccount ,createAndDeploySmartAccount} from './src/api/controllers/walletController.js';
 import {
@@ -30,10 +30,14 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send('Server test working');
 });
+app.use(morgan('dev'));
 
 // Smart account
 app.post('/createSmartAccount',authenticateToken, createSmartAccount);
-  app.get('/getSmartAccount', authenticateToken,getSmartAccount);
+app.get('/getSmartAccount',getSmartAccount);
+app.post('/api/jwt', authenticateToken, (req, res) => {
+  res.json(req.auth);
+});
 
   // voucher
   app.post('/create_voucher',authenticateToken, createVoucher);
@@ -58,7 +62,9 @@ app.post('/createSmartAccount',authenticateToken, createSmartAccount);
   //Combined endpoint
   app.post('/complete-process',authenticateToken, upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), createAndDeploySmartAccount);
 
-
+  // update voucher 
+  app.put('/update-voucher', authenticateToken, upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), updateVoucherAndMetadata);
+  
 
 // Error handling for unauthorized access
 app.use((err, req, res, next) => {

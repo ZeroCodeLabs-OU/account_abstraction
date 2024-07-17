@@ -1,5 +1,6 @@
 import { create } from 'ipfs-http-client';
-
+import dotenv from 'dotenv';
+dotenv.config();
 const infuraPublic=process.env.INFURA_PROJECT_ID
 const infuraPrivate=process.env.INFURA_PROJECT_SECRET
 const auth = 'Basic ' + Buffer.from(infuraPublic+ ':' + infuraPrivate ).toString('base64');

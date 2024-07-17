@@ -3,20 +3,20 @@ import { createSmartAccountClient, createPaymaster, PaymasterMode } from "@bicon
 import { ethers } from 'ethers';
 import crypto from 'crypto';
 import db from '../config/dbConfig.js';
-import { fetchSmartAccountIDBySmartAccountAddress, fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
-
+import { fetchSmartAccountIDBySmartAccountAddress, fetchSmartAccountByWalletAddress,fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
+import dotenv from 'dotenv';
+dotenv.config();
 export const generateQRData = async (req, res) => {
-    const { voucherId, tokenId, amount } = req.body;
-    const { encrypted_wallet } = req.auth;
+    const { voucherId, tokenId=0, amount } = req.body;
+    const { wallet_data } = req.auth;
 
     // Validate the encrypted wallet data
-    if (!encrypted_wallet || !encrypted_wallet.encryptedData || !encrypted_wallet.iv) {
-        console.error('Invalid encrypted wallet data:', encrypted_wallet);
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
 
     // Decrypt the wallet address
-    const signerInstance = getSigner(encrypted_wallet);
+    const signerInstance = getSigner(wallet_data);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
         console.error('Invalid or undefined signer address:', signerInstance);
         return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -28,7 +28,23 @@ export const generateQRData = async (req, res) => {
         if (!contractAddress) {
             throw new Error('Voucher ID not found');
         }
+        const contractABI = [
+            "function balanceOf(address account, uint256 id) public view returns (uint256)"
+        ];
+        const provider = ethers.getDefaultProvider(process.env.INFURA_PROJECT_URL);
+        const contract = new ethers.Contract(contractAddress, contractABI,provider );
 
+        // Call the balanceOf function directly
+        const balance = await contract.balanceOf(walletAddress, tokenId);
+        const balanceNumber = parseInt(balance.toString(), 10);
+        const amountNumber = parseInt(amount, 10);
+        console.log("Balance Number:", balanceNumber);
+        console.log("Amount Number:", amountNumber);;
+
+        if (balanceNumber < amountNumber) {  // Check if balance is less than the amount
+            console.log('Insufficient balance:', balanceNumber, 'needed:', amountNumber);
+            return res.status(400).json({ error: 'Insufficient balance' });
+        }
         // Generate QR data and expiration time
         const qrData = JSON.stringify({ walletAddress, contractAddress, tokenId, amount, voucherId });
         const cipher = crypto.createCipher('aes-256-cbc', process.env.QR_SECRET);
@@ -52,9 +68,10 @@ export const generateQRData = async (req, res) => {
     }
 };
 
+
 export const decryptAndRevoke = async (req, res) => {
     const { encryptedData, qrDataId } = req.body;
-    const { encrypted_wallet } = req.auth;
+    const { wallet_data } = req.auth;
 
     if (!encryptedData || !qrDataId) {
         return res.status(400).json({ error: 'Missing required parameters' });
@@ -65,8 +82,8 @@ export const decryptAndRevoke = async (req, res) => {
         const decipher = crypto.createDecipher('aes-256-cbc', process.env.QR_SECRET);
         let decryptedData = decipher.update(encryptedData, 'hex', 'utf8');
         decryptedData += decipher.final('utf8');
-        
-        console.log("dec", decryptedData);
+
+        console.log("Decrypted Data:", decryptedData);
 
         // Parse the decrypted data
         const parsedData = JSON.parse(decryptedData);
@@ -79,7 +96,7 @@ export const decryptAndRevoke = async (req, res) => {
         }
 
         // Get signer instance
-        const signerInstance = getSigner(encrypted_wallet);
+        const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -95,22 +112,29 @@ export const decryptAndRevoke = async (req, res) => {
         // Get contract address using voucher ID
         const contractAddr = await getContractAddressByVoucherId(voucherId);
 
-        // Get balance of the user using a low-level call
-        const balanceOfData = new ethers.Interface([
+        // Debugging logs
+        console.log("Contract Address:", contractAddr);
+        console.log("Token ID:", tokenId);
+        console.log("Wallet Address:", walletAddress);
+
+        // Create a contract instance
+        const contractABI = [
             "function balanceOf(address account, uint256 id) public view returns (uint256)"
-        ]).encodeFunctionData("balanceOf", [walletAddress, tokenId]);
+        ];
+        const provider = ethers.getDefaultProvider(process.env.INFURA_PROJECT_URL);
+        const contract = new ethers.Contract(contractAddr, contractABI,provider );
 
-        const balanceHex = await ethers.getDefaultProvider().call({
-            to: contractAddr,
-            data: balanceOfData
-        });
+        // Call the balanceOf function directly
+        const balance = await contract.balanceOf(walletAddress, tokenId);
+        const balanceNumber = parseInt(balance.toString(), 10);
+        const amountNumber = parseInt(amount, 10);
+        console.log("Balance Number:", balanceNumber);
+        console.log("Amount Number:", amountNumber);;
 
-        const balance = ethers.BigNumber.from(balanceHex).toNumber();
-
-        if (balance < amount) {
+        if (balanceNumber < amountNumber) {  // Check if balance is less than the amount
+            console.log('Insufficient balance:', balanceNumber, 'needed:', amountNumber);
             return res.status(400).json({ error: 'Insufficient balance' });
         }
-
         // Revoke the NFT
         const revokeFunctionData = new ethers.Interface([
             "function revoke(address from, uint256 id, uint256 amount)"
@@ -120,20 +144,22 @@ export const decryptAndRevoke = async (req, res) => {
             to: contractAddr,
             data: revokeFunctionData
         };
-
+        const smartAccount = await fetchSmartAccountByWalletAddress(walletAddress)
         const txResponse = await biconomySmartAccount.sendTransaction(tx, {
             paymasterServiceData: { mode: PaymasterMode.SPONSORED }
         });
         const txReceipt = await txResponse.wait();
 
-        if (!txReceipt.success) {
+        console.log("Transaction Receipt:", txReceipt);
+
+        if (txReceipt.success == "false") {
             throw new Error('Revoke transaction failed');
         }
 
         console.log('Revoke transaction successful:', txReceipt);
 
         // Update the mint database to mark as revoked
-        await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2`, [voucherId, tokenId]);
+        await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2 AND smart_account_address = $3`, [voucherId, tokenId, smartAccount]);
 
         res.status(200).json({ message: 'NFT revoked successfully', txReceipt });
     } catch (error) {
@@ -141,3 +167,7 @@ export const decryptAndRevoke = async (req, res) => {
         res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 };
+
+//add checks on miniting
+//add new contract so we can test change base uri
+//add some production thing like moussa added about loging the endpoint rquests
