@@ -70,12 +70,12 @@ export const createSmartAccount = async (req, res) => {
 
 export const getSmartAccount = async (req, res) => {
   try {
-    // const { wallet_data } = req.auth;
-    // const signerInstance = getSigner(wallet_data);
-        const { walletAddress } = req.body;
+    const { uid, wallet_data } = req.auth;
+    const signerInstance = getSigner(wallet_data);
+        // const { walletAddress } = req.body;
 
 
-    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [walletAddress]);
+    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [signerInstance.address]);
     if (result.rows.length) {
       res.status(200).json(result.rows[0]);
     } else {
