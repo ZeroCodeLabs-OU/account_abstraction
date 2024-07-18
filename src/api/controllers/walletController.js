@@ -42,7 +42,7 @@ export const createSmartAccount = async (req, res) => {
     });
 
     const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-
+    
     // Store in database and return the inserted data
     const result = await db.query(
       'INSERT INTO account_abstraction.smart_account (uid, wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3, $4) RETURNING *',
@@ -128,10 +128,14 @@ export const createAndDeploySmartAccount = async (req, res) => {
       );
       smartAccountId = result.rows[0].id;
     }
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    console.log('Values:', [smartAccountId, name, description, status, lat, lon]);
 
     const voucherResult = await client.query(
-      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING id',
-      [smartAccountId, name, description, status, latitude, longitude]
+      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6, now()) RETURNING id',
+      [smartAccountId, name, description, status, lat, lon]
     );
     const voucherId = voucherResult.rows[0].id;
 
