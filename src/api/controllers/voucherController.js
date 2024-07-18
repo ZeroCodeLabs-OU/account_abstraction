@@ -211,13 +211,13 @@ export const getVouchersByLocationAndRadius = async (req, res) => {
         const result = await db.query(
             `SELECT v.*, 
                     json_agg(nm.*) AS nft_metadata,
-                    ST_Distance(v.location, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($2, $1), 4326)) AS distance
+                    account_abstraction.ST_Distance(v.location, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($2, $1), 4326)) AS distance
              FROM account_abstraction.voucher v 
              LEFT JOIN account_abstraction.nft_metadata nm ON v.id = nm.voucher_id 
              WHERE v.status = $3 
              AND account_abstraction.ST_DWithin(
                  v.location,
-                 account_abstraction.ST_SetSRID(ST_MakePoint($2, $1), 4326),
+                 account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($2, $1), 4326),
                  $4
              )
              GROUP BY v.id
