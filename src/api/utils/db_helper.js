@@ -267,7 +267,7 @@ async function update_Voucher(voucherId, { name, description, status, latitude, 
       values.push(status);
   }
   if (latitude !== undefined && longitude !== undefined) {
-      fields.push(`location = ST_SetSRID(ST_MakePoint($${idx++}, $${idx++}), 4326)`);
+      fields.push(`location = account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($${idx++}, $${idx++}), 4326)`);
       values.push(latitude, longitude);
   }
 

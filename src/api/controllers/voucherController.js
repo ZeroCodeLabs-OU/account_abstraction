@@ -28,7 +28,7 @@ export const createVoucher = async (req, res) => {
         }
         const uid = await fetchUIDByWalletAddress(wallet_address)
         const result = await db.query(
-            'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
+            'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
             [SmartAccountId, name, description, status, latitude, longitude]
         );
         res.status(201).json({ ...result.rows[0], uid });
@@ -70,7 +70,7 @@ export const updateVoucher = async (req, res) => {
 
     try {
         const result = await db.query(
-            'UPDATE account_abstraction.voucher SET name = $1, description = $2, status = $3, location = ST_SetSRID(ST_MakePoint($4, $5), 4326), latitude = $4, longitude = $5 WHERE id = $6 RETURNING *',
+            'UPDATE account_abstraction.voucher SET name = $1, description = $2, status = $3, location = account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($4, $5), 4326), latitude = $4, longitude = $5 WHERE id = $6 RETURNING *',
             [name, description, status, latitude, longitude, voucher_id]
         );
 
@@ -211,13 +211,13 @@ export const getVouchersByLocationAndRadius = async (req, res) => {
         const result = await db.query(
             `SELECT v.*, 
                     json_agg(nm.*) AS nft_metadata,
-                    ST_Distance(v.location, ST_SetSRID(ST_MakePoint($2, $1), 4326)) AS distance
+                    ST_Distance(v.location, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($2, $1), 4326)) AS distance
              FROM account_abstraction.voucher v 
              LEFT JOIN account_abstraction.nft_metadata nm ON v.id = nm.voucher_id 
              WHERE v.status = $3 
-             AND ST_DWithin(
+             AND account_abstraction.ST_DWithin(
                  v.location,
-                 ST_SetSRID(ST_MakePoint($2, $1), 4326),
+                 account_abstraction.ST_SetSRID(ST_MakePoint($2, $1), 4326),
                  $4
              )
              GROUP BY v.id
