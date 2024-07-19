@@ -3,7 +3,7 @@ import { createSmartAccountClient, createPaymaster, PaymasterMode } from "@bicon
 import { ethers } from 'ethers';
 import crypto from 'crypto';
 import db from '../config/dbConfig.js';
-import { fetchSmartAccountIDBySmartAccountAddress, fetchSmartAccountByWalletAddress,fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
+import { fetchSmartAccountIDBySmartAccountAddress, getUidUsingVoucherId,fetchSmartAccountByWalletAddress,fetchAccountIdByWalletAddress, fetchBaseURI, getContractAddressByVoucherId } from '../utils/db_helper.js';
 import dotenv from 'dotenv';
 dotenv.config();
 export const generateQRData = async (req, res) => {
@@ -21,21 +21,27 @@ export const generateQRData = async (req, res) => {
         console.error('Invalid or undefined signer address:', signerInstance);
         return res.status(400).json({ error: 'Invalid or undefined signer address' });
     }
-
-    const walletAddress = signerInstance.address;
+    const biconomySmartAccount = await createSmartAccountClient({
+        signer: signerInstance,
+        biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
+        bundlerUrl: process.env.BUNDLER_URL
+    });
+    const walletAddress= biconomySmartAccount.getAccountAddress();
     try {
         const contractAddress = await getContractAddressByVoucherId(voucherId);
-        if (!contractAddress) {
+        if (!contractAddress.contract_address) {
             throw new Error('Voucher ID not found');
         }
         const contractABI = [
             "function balanceOf(address account, uint256 id) public view returns (uint256)"
         ];
         const provider = ethers.getDefaultProvider(process.env.INFURA_PROJECT_URL);
-        const contract = new ethers.Contract(contractAddress, contractABI,provider );
-
+        const contract = new ethers.Contract(contractAddress.contract_address, contractABI,provider );
+        
         // Call the balanceOf function directly
         const balance = await contract.balanceOf(walletAddress, tokenId);
+        console.log("wakket",walletAddress)
+        console.log(contractAddress.contract_address ,"contract")
         const balanceNumber = parseInt(balance.toString(), 10);
         const amountNumber = parseInt(amount, 10);
         console.log("Balance Number:", balanceNumber);
@@ -76,7 +82,10 @@ export const decryptAndRevoke = async (req, res) => {
     if (!encryptedData || !qrDataId) {
         return res.status(400).json({ error: 'Missing required parameters' });
     }
-
+    const uid_voucher_id = await getUidUsingVoucherId(voucher_id);
+    if (uid_voucher_id !== uid) {
+        return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
+    }
     try {
         // Decrypt the QR data
         const decipher = crypto.createDecipher('aes-256-cbc', process.env.QR_SECRET);
@@ -113,7 +122,7 @@ export const decryptAndRevoke = async (req, res) => {
         const contractAddr = await getContractAddressByVoucherId(voucherId);
 
         // Debugging logs
-        console.log("Contract Address:", contractAddr);
+        console.log("Contract Address:", contractAddr.contract_address);
         console.log("Token ID:", tokenId);
         console.log("Wallet Address:", walletAddress);
 
@@ -122,7 +131,7 @@ export const decryptAndRevoke = async (req, res) => {
             "function balanceOf(address account, uint256 id) public view returns (uint256)"
         ];
         const provider = ethers.getDefaultProvider(process.env.INFURA_PROJECT_URL);
-        const contract = new ethers.Contract(contractAddr, contractABI,provider );
+        const contract = new ethers.Contract(contractAddr.contract_address, contractABI,provider );
 
         // Call the balanceOf function directly
         const balance = await contract.balanceOf(walletAddress, tokenId);
@@ -141,7 +150,7 @@ export const decryptAndRevoke = async (req, res) => {
         ]).encodeFunctionData("revoke", [walletAddress, tokenId, amount]);
 
         const tx = {
-            to: contractAddr,
+            to: contractAddr.contract_address,
             data: revokeFunctionData
         };
         const smartAccount = await fetchSmartAccountByWalletAddress(walletAddress)

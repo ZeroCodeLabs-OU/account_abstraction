@@ -387,3 +387,4 @@ export const updateVoucherAndMetadata = async (req, res) => {
         res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 };
+// look into onchcain changes for smart contract max supply

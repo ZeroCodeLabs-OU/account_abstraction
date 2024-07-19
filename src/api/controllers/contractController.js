@@ -176,14 +176,44 @@ export const mintTokens = async (req, res) => {
       bundlerUrl: process.env.BUNDLER_URL
     });
 
-    const contractAddress = await getContractAddressByVoucherId(voucherId);
+    const walletAddress = biconomySmartAccount.getAccountAddress();
 
-    const mintFunctionData = new ethers.Interface([
+    const contractAddress = await getContractAddressByVoucherId(voucherId);
+    const tokenPerPerson =contractAddress.max_per_person;
+    const contractABI = [
+      "function balanceOf(address account, uint256 id) public view returns (uint256)"
+  ];
+  const provider = ethers.getDefaultProvider(process.env.INFURA_PROJECT_URL);
+  const contract = new ethers.Contract(contractAddress.contract_address, contractABI,provider );
+
+  // Call the balanceOf function directly
+  const balance = await contract.balanceOf(walletAddress, id);
+  const balanceNumber = parseInt(balance.toString(), 10);
+
+  if (balanceNumber + 1 > tokenPerPerson) {  
+      return res.status(400).json({ error: 'Token Per Person value surpassed' });
+  }
+
+  const _contractABI = [
+    "function availableToken(uint256 id) public view returns (uint256)"
+  ];
+const _contract = new ethers.Contract(contractAddress.contract_address, _contractABI,provider );
+
+// Call the balanceOf function directly
+const available = await _contract.availableToken(id);
+const availableToken = parseInt(available.toString(), 10);
+  if(availableToken==0){
+    return res.status(400).json({ error: 'max supply of token id surpassed' });
+
+  }
+
+  const mintFunctionData = new ethers.Interface([
       "function mint(uint256 amount, uint256 id, bytes memory data)"
     ]).encodeFunctionData("mint", [amount, id, data]);
 
+
     const tx = {
-      to: contractAddress,
+      to: contractAddress.contract_address,
       data: mintFunctionData
     };
 
@@ -192,7 +222,7 @@ export const mintTokens = async (req, res) => {
     });
     const txReceipt = await txResponse.wait();
     
-    if (!txReceipt.success) {
+    if (txReceipt.success =="false") {
       throw new Error('Mint transaction failed');
     }
 
@@ -249,7 +279,7 @@ export const revokeTokens = async (req, res) => {
     ]).encodeFunctionData("burn", [id, amount]);
 
     const tx = {
-      to: contractAddress,
+      to: contractAddress.contract_address,
       data: burnFunctionData
     };
 

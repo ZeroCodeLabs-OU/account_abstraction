@@ -31,11 +31,11 @@ async function fetchAccountIdByWalletAddress(walletAddress) {
 }
 
 async function getContractAddressByVoucherId(voucherId) {
-  const query = 'SELECT contract_address FROM account_abstraction.smart_account_smart_contract WHERE voucher_id = $1';
+  const query = 'SELECT * FROM account_abstraction.smart_account_smart_contract WHERE voucher_id = $1';
   try {
     const result = await db.query(query, [voucherId]);
     if (result.rows.length > 0) {
-      return result.rows[0].contract_address;
+      return result.rows[0];
     } else {
       throw new Error("No contract address found for the given voucher ID");
     }
