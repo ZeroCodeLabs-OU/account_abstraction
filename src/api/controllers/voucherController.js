@@ -315,14 +315,17 @@ export const getCollectedVouchers = async (req, res) => {
 
 export const updateVoucherAndMetadata = async (req, res) => {
     const { voucher_id, name, description, status, latitude, longitude } = req.body;
-    const { wallet_data } = req.auth;
+    const { wallet_data,uid } = req.auth;
     const images = req.files['images'] || [];
     const metadataFiles = req.files['metadata'] || [];
 
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-
+    const uid_voucher_id = await getUidUsingVoucherId(voucher_id);
+    if (uid_voucher_id !== uid) {
+        return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
+    }
     try {
         const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
