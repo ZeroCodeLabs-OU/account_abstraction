@@ -190,6 +190,7 @@ async function insertNFTMetadata(voucherId, tokenId, imageUrl, metadata) {
   const values = [voucherId, tokenId, imageUrl, metadata];
   try {
       const result = await db.query(query, values);
+      console.log(result)
       return result.rows[0].id;
   } catch (err) {
       console.error("Database error while inserting NFT metadata:", err);
@@ -288,22 +289,41 @@ async function update_Voucher(voucherId, { name, description, status, latitude, 
 }
 
 async function insertOrUpdateNFTMetadata(voucherId, tokenId, imageUrl, metadata) {
-  const query = `
-      INSERT INTO account_abstraction.nft_metadata (voucher_id, token_id, image_url, metadata, created_at)
-      VALUES ($1, $2, $3, $4, now())
-      ON CONFLICT (voucher_id, token_id) DO UPDATE
-      SET image_url = $3, metadata = $4, updated_at = now()
-      RETURNING id;
+  const checkQuery = `
+    SELECT id FROM account_abstraction.nft_metadata WHERE voucher_id = $1 AND token_id = $2;
+  `;
+  const insertQuery = `
+    INSERT INTO account_abstraction.nft_metadata (voucher_id, token_id, image_url, metadata, created_at)
+    VALUES ($1, $2, $3, $4, now())
+    RETURNING id;
+  `;
+  const updateQuery = `
+    UPDATE account_abstraction.nft_metadata
+    SET image_url = $3, metadata = $4, updated_at = now()
+    WHERE voucher_id = $1 AND token_id = $2
+    RETURNING id;
   `;
   const values = [voucherId, tokenId, imageUrl, metadata];
+
   try {
-      const result = await db.query(query, values);
-      return result.rows[0].id;
+    // Check if the entry exists
+    const checkResult = await db.query(checkQuery, [voucherId, tokenId]);
+
+    if (checkResult.rows.length > 0) {
+      // Update the existing entry
+      const updateResult = await db.query(updateQuery, values);
+      return updateResult.rows[0].id;
+    } else {
+      // Insert a new entry
+      const insertResult = await db.query(insertQuery, values);
+      return insertResult.rows[0].id;
+    }
   } catch (err) {
-      console.error("Database error while inserting or updating NFT metadata:", err);
-      throw err;
+    console.error("Database error while inserting or updating NFT metadata:", err);
+    throw err;
   }
 }
+
 async function updateBaseURI(voucherId, baseUri) {
   const query = `
       UPDATE account_abstraction.nft_cid

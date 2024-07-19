@@ -134,7 +134,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
     console.log('Values:', [smartAccountId, name, description, status, lat, lon]);
 
     const voucherResult = await client.query(
-      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6, now()) RETURNING id',
+      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6, now()) RETURNING id',
       [smartAccountId, name, description, status, lat, lon]
     );
     const voucherId = voucherResult.rows[0].id;
