@@ -329,7 +329,10 @@ export const updateVoucherAndMetadata = async (req, res) => {
             console.error('Invalid or undefined signer address:', signerInstance);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
-
+        if (!voucher_id) {
+            return res.status(400).json({ error: 'voucher_id requiredd' });
+        }
+    
         // Update voucher
         const updatedVoucher = await update_Voucher(voucher_id, { name, description, status, latitude, longitude });
 
