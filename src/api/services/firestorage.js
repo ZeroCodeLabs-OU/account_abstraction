@@ -113,7 +113,7 @@ async function uploadToFirebase(image, firebaseFile) {
                 const ipfsImageUrl = await uploadToIPFSAndPin(image.buffer, `${image.originalname}`);
         
                 // Upload Image to Firebase Storage
-                const firebaseStoragePath = `${image.originalname}`;
+                const firebaseStoragePath = `${voucherId}/${image.originalname}`;
                 const firebaseFile = bucket.file(firebaseStoragePath);
                 const publicUrl = await uploadToFirebase(image, firebaseFile);
                 firebaseImageUrls.push(publicUrl);
