@@ -100,7 +100,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       status, 
       latitude, 
       longitude, 
-      tokenQuantity, max_supply,
+      tokenQuantity,
       max_token_per_mint, 
       max_token_per_person 
     } = req.body;
@@ -186,10 +186,11 @@ export const createAndDeploySmartAccount = async (req, res) => {
     
     const publicMintStart = Math.floor(Date.now() / 1000);
     const presaleMintStart = Math.floor(Date.now() / 1000) + 86400;
+    const tokenQ=parseJsonField(tokenQuantity)
 
     const initData = encodeInitializationData(
       name,
-      max_supply,
+      tokenQ.length,
       parseJsonField(tokenQuantity),
       parseJsonField(max_token_per_mint),
       parseJsonField(max_token_per_person),
@@ -213,7 +214,6 @@ export const createAndDeploySmartAccount = async (req, res) => {
       res.status(500).json({ error: 'Initialization transaction failed' });
       return;
     }
-
     const contractResponse = await createSmartAccountContract({
       smartAccountId,
       voucherId,
@@ -225,7 +225,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       baseUri: base_URI,
       tokenSymbol: name.slice(0, 4),
       royaltyShare: 0,
-      maxSupply: max_supply,
+      maxSupply: tokenQ.length,
       tokenQuantity : parseJsonField(tokenQuantity),
       teamReserved: 0,
       maxPerPerson: parseJsonField(max_token_per_person),
