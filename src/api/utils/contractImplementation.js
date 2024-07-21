@@ -20,7 +20,7 @@ function encodeInitializationData(name, max_supply, token_Quantity, max_token_pe
     tokenPerPerson: max_token_per_person,
     treasuryAddress: smartAccountAddress,
     whitelistSigner: process.env.WHITELISTSIGNER,
-    isSoulBound: false,
+    isSoulBound: true,
     openEdition: false,
     trustedForwarder: process.env.trustedForwarder,
   };

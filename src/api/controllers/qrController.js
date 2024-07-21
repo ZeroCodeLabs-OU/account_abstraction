@@ -26,7 +26,7 @@ export const generateQRData = async (req, res) => {
         biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
         bundlerUrl: process.env.BUNDLER_URL
     });
-    const walletAddress= biconomySmartAccount.getAccountAddress();
+    const walletAddress= await biconomySmartAccount.getAccountAddress();
     try {
         const contractAddress = await getContractAddressByVoucherId(voucherId);
         if (!contractAddress.contract_address) {
@@ -77,15 +77,12 @@ export const generateQRData = async (req, res) => {
 
 export const decryptAndRevoke = async (req, res) => {
     const { encryptedData, qrDataId } = req.body;
-    const { wallet_data } = req.auth;
+    const { wallet_data ,uid} = req.auth;
 
     if (!encryptedData || !qrDataId) {
         return res.status(400).json({ error: 'Missing required parameters' });
     }
-    const uid_voucher_id = await getUidUsingVoucherId(voucher_id);
-    if (uid_voucher_id !== uid) {
-        return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
-    }
+    
     try {
         // Decrypt the QR data
         const decipher = crypto.createDecipher('aes-256-cbc', process.env.QR_SECRET);
@@ -97,13 +94,21 @@ export const decryptAndRevoke = async (req, res) => {
         // Parse the decrypted data
         const parsedData = JSON.parse(decryptedData);
         const { walletAddress, contractAddress, tokenId, amount, voucherId } = parsedData;
-
+        const uid_voucher_id = await getUidUsingVoucherId(voucherId);
+        if (uid_voucher_id !== uid) {
+             return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
+        }
         // Check if QR data is expired
         const result = await db.query(`SELECT expiration FROM account_abstraction.qr_data WHERE id = $1`, [qrDataId]);
-        if (result.rows.length === 0 || new Date(result.rows[0].expiration) < new Date()) {
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'QR data not found' });
+        }
+        
+        
+        const expirationDate = new Date(result.rows[0].expiration);
+        if (expirationDate < new Date()) {
             return res.status(400).json({ error: 'QR data has expired' });
         }
-
         // Get signer instance
         const signerInstance = getSigner(wallet_data);
         if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
@@ -153,7 +158,6 @@ export const decryptAndRevoke = async (req, res) => {
             to: contractAddr.contract_address,
             data: revokeFunctionData
         };
-        const smartAccount = await fetchSmartAccountByWalletAddress(walletAddress)
         const txResponse = await biconomySmartAccount.sendTransaction(tx, {
             paymasterServiceData: { mode: PaymasterMode.SPONSORED }
         });
@@ -168,7 +172,7 @@ export const decryptAndRevoke = async (req, res) => {
         console.log('Revoke transaction successful:', txReceipt);
 
         // Update the mint database to mark as revoked
-        await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2 AND smart_account_address = $3`, [voucherId, tokenId, smartAccount]);
+        await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2 AND smart_account_address = $3`, [voucherId, tokenId, walletAddress]);
 
         res.status(200).json({ message: 'NFT revoked successfully', txReceipt });
     } catch (error) {

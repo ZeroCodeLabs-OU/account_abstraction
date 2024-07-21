@@ -187,7 +187,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
     const publicMintStart = Math.floor(Date.now() / 1000);
     const presaleMintStart = Math.floor(Date.now() / 1000) + 86400;
     const tokenQ=parseJsonField(tokenQuantity)
-
+    const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
     const initData = encodeInitializationData(
       name,
       tokenQ.length,
@@ -197,7 +197,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       base_URI,
       publicMintStart,
       presaleMintStart,
-      signerInstance.address
+      smartAccountAddress
     );
 
     const initTx = {
@@ -233,7 +233,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       presaleMintStartDate: new Date(presaleMintStart * 1000),
       publicMintStartDate: new Date(publicMintStart * 1000),
       prerevealBaseUri: "",
-      sbtActivated: false,
+      sbtActivated: true,
       isGasless: false,
       isArchived: false,
       externalContract: false
