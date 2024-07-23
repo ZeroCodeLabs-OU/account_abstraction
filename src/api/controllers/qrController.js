@@ -7,7 +7,7 @@ import { fetchSmartAccountIDBySmartAccountAddress, getUidUsingVoucherId,fetchSma
 import dotenv from 'dotenv';
 dotenv.config();
 export const generateQRData = async (req, res) => {
-    const { voucherId, tokenId=0, amount } = req.body;
+    const { voucherId, tokenId=0, amount=1 } = req.body;
     const { wallet_data,uid } = req.auth;
 
     // Validate the encrypted wallet data
