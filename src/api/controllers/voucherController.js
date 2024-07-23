@@ -344,37 +344,38 @@ export const updateVoucherAndMetadata = async (req, res) => {
             const { baseURI, firebaseImageUrls } = await update_processFiles(images, metadataFiles, voucher_id);
             await updateBaseURI(voucher_id, baseURI);
 
-            // const contractAddress = await getContractAddressByVoucherId(voucher_id);
-            // const updateMetadataFunctionData = new ethers.Interface([
-            //     "function metadata_update(string memory _baseURI) public onlyRole(ADMIN_ROLE)"
-            // ]).encodeFunctionData("metadata_update", [baseURI]);
+            const contractAddress = await getContractAddressByVoucherId(voucher_id);
+            const updateMetadataFunctionData = new ethers.Interface([
+                " function metadata_update(string memory _baseURI)"
+            ]).encodeFunctionData("metadata_update", [baseURI]);
 
 
-            // const tx = {
-            //     to: contractAddress,
-            //     data: updateMetadataFunctionData
-            // };
+            const tx = {
+                to: contractAddress.contract_address,
+                data: updateMetadataFunctionData
+            };
 
-            // const biconomySmartAccount = await createSmartAccountClient({
-            //     signer: signerInstance,
-            //     biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
-            //     bundlerUrl: process.env.BUNDLER_URL
-            // });
+            const biconomySmartAccount = await createSmartAccountClient({
+                signer: signerInstance,
+                biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
+                bundlerUrl: process.env.BUNDLER_URL
+            });
 
-            // const txResponse = await biconomySmartAccount.sendTransaction(tx, {
-            //     paymasterServiceData: { mode: PaymasterMode.SPONSORED }
-            // });
-            // const txReceipt = await txResponse.wait();
+            const txResponse = await biconomySmartAccount.sendTransaction(tx, {
+                paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+            });
+            const txReceipt = await txResponse.wait();
 
-            // if (!txReceipt.success) {
-            //     throw new Error('Metadata update transaction failed');
-            // }
+            if (txReceipt.success == "false") {
+                throw new Error('Metadata update transaction failed');
+            }
 
             res.status(200).json({
                 message: "Voucher and metadata updated successfully",
                 updatedVoucher,
                 baseURI,
-                firebaseImageUrls
+                firebaseImageUrls,
+                txReceipt
             });
         } else {
             res.status(200).json({
@@ -387,4 +388,3 @@ export const updateVoucherAndMetadata = async (req, res) => {
         res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 };
-// look into onchcain changes for smart contract max supply

@@ -154,7 +154,7 @@ export const deploySmartContract = async (req, res) => {
 
 export const mintTokens = async (req, res) => {
   const { voucherId, id=0, amount = 1, tokenIndex = 1 } = req.body;
-  const { wallet_data } = req.auth;
+  const { wallet_data,uid } = req.auth;
   const data = "0x00";
 
   console.log('Received request body:', req.body);
@@ -162,7 +162,24 @@ export const mintTokens = async (req, res) => {
   if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
     return res.status(400).json({ error: 'Invalid encrypted wallet data' });
   }
+  const signerInstance = getSigner(wallet_data);
+    const walletAddress = signerInstance.address;
+    const existingAccount = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [walletAddress]);
 
+    let smartAccountId;
+    if (existingAccount.rows.length) {
+      smartAccountId = existingAccount.rows[0].id;
+    } else {
+      const paymaster = await createPaymaster({ paymasterUrl: process.env.PAYMASTER_URL, strictMode: true });
+      const biconomySmartAccount = await createSmartAccountClient({ signer: signerInstance, paymaster, bundlerUrl: process.env.BUNDLER_URL });
+      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+      const result = await db.query(
+        'INSERT INTO account_abstraction.smart_account (uid, wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3, $4) RETURNING id',
+        [uid, walletAddress, smartAccountAddress, new Date()]
+      );
+      smartAccountId = result.rows[0].id;
+    }
+  
   try {
     const signerInstance = getSigner(wallet_data);
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
