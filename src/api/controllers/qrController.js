@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 export const generateQRData = async (req, res) => {
     const { voucherId, tokenId=0, amount } = req.body;
-    const { wallet_data } = req.auth;
+    const { wallet_data,uid } = req.auth;
 
     // Validate the encrypted wallet data
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
@@ -27,7 +27,7 @@ export const generateQRData = async (req, res) => {
       const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
       const result = await db.query(
         'INSERT INTO account_abstraction.smart_account (uid, wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3, $4) RETURNING id',
-        [uid, walletAddress, smartAccountAddress, new Date()]
+        [uid, wallet_Address, smartAccountAddress, new Date()]
       );
       smartAccountId = result.rows[0].id;
     }
