@@ -341,6 +341,26 @@ async function updateBaseURI(voucherId, baseUri) {
   }
 }
 
+async function fetchMintTransactionCount(voucherId, tokenId) {
+  const query = `
+    SELECT COUNT(*) as count
+    FROM account_abstraction.nft_tx_mint
+    WHERE voucher_id = $1 AND token_id = $2;
+  `;
+  try {
+    const result = await db.query(query, [voucherId, tokenId]);
+    if (result.rows.length > 0) {
+      return parseInt(result.rows[0].count, 10); // Convert the count to an integer
+    } else {
+      throw new Error("No entries found for the given voucherId and tokenId");
+    }
+  } catch (err) {
+    console.error("Database error while fetching mint transaction count:", err);
+    throw err;
+  }
+}
+
+
 export {
   fetchBaseURI,
   fetchAccountIdByWalletAddress,
@@ -349,6 +369,6 @@ export {
   recordMintTransaction,
   recordRevokeTransaction,
   getContractAddressByVoucherId, update_Voucher,
-  insertOrUpdateNFTMetadata,updateBaseURI,
+  insertOrUpdateNFTMetadata,updateBaseURI,fetchMintTransactionCount,
   fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI,getUidUsingVoucherId,fetchUIDByWalletAddress
 };

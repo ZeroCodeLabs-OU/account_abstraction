@@ -31,7 +31,7 @@ export const generateQRData = async (req, res) => {
       );
       smartAccountId = result.rows[0].id;
     }
-  
+    
 
     // Decrypt the wallet address
     if (!signerInstance || !ethers.isAddress(signerInstance.address)) {

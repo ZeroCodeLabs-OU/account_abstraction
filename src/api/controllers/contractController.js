@@ -12,7 +12,7 @@ import {
   createSmartAccountContract,
   recordMintTransaction,
   recordRevokeTransaction,
-  getContractAddressByVoucherId,getUidUsingVoucherId
+  getContractAddressByVoucherId,getUidUsingVoucherId,fetchMintTransactionCount
 } from '../utils/db_helper.js';
 
 const { abi, bytecode } = contractJson;
@@ -218,12 +218,19 @@ const _contract = new ethers.Contract(contractAddress.contract_address, _contrac
 
 // Call the balanceOf function directly
 const available = await _contract.availableToken(id);
-const availableToken = parseInt(available.toString(), 10);
+  const availableToken = parseInt(available.toString(), 10);
   if(availableToken==0){
     return res.status(400).json({ error: 'max supply of token id surpassed' });
 
   }
 
+  const totalMinted= await fetchMintTransactionCount(voucherId,id);
+  const tokenQuantity = contractAddress.tokenquantity[id];
+  console.log("Token Quantity:", tokenQuantity);
+  console.log("Total Minted:", totalMinted);
+  if (totalMinted >= tokenQuantity) {
+    return res.status(400).json({ error: 'Token quantity surpassed' });
+  }
   const mintFunctionData = new ethers.Interface([
       "function mint(uint256 amount, uint256 id, bytes memory data)"
     ]).encodeFunctionData("mint", [amount, id, data]);
