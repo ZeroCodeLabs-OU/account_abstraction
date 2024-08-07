@@ -236,11 +236,11 @@ async function getUidUsingVoucherId(voucherId) {
 }
 
 async function fetchUIDByWalletAddress(walletAddress) {
-  const query = 'SELECT id FROM account_abstraction.uid WHERE wallet_address = $1';
+  const query = 'SELECT id FROM account_abstraction.smart_account WHERE wallet_address = $1';
   try {
     const result = await db.query(query, [walletAddress]);
     if (result.rows.length > 0) {
-      return result.rows[0].id;
+      return result.rows[0].uid;
     } else {
       throw new Error("No account found for the given wallet address");
     }
@@ -360,7 +360,20 @@ async function fetchMintTransactionCount(voucherId, tokenId) {
   }
 }
 
-
+async function fetchNetworkFromVoucherId(voucher_id) {
+  const query = 'SELECT * FROM account_abstraction.voucher WHERE id = $1';
+  try {
+    const result = await db.query(query, [voucher_id]);
+    if (result.rows.length > 0) {
+      return result.rows[0].network;
+    } else {
+      throw new Error("No account found for the given wallet address");
+    }
+  } catch (err) {
+    console.error("Database error while fetching account id:", err);
+    throw err;
+  }
+}
 export {
   fetchBaseURI,
   fetchAccountIdByWalletAddress,
@@ -370,5 +383,5 @@ export {
   recordRevokeTransaction,
   getContractAddressByVoucherId, update_Voucher,
   insertOrUpdateNFTMetadata,updateBaseURI,fetchMintTransactionCount,
-  fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI,getUidUsingVoucherId,fetchUIDByWalletAddress
+  fetchSmartAccountByWalletAddress,insertNFTMetadata,insertBaseURI,getUidUsingVoucherId,fetchUIDByWalletAddress,fetchNetworkFromVoucherId
 };

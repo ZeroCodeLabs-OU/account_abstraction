@@ -1,6 +1,6 @@
 import db from '../config/dbConfig.js';
-import { fetchBaseURI, fetchAccountIdByWalletAddress,updateBaseURI,getContractAddressByVoucherId,update_Voucher, insertOrUpdateNFTMetadata,fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress ,fetchUIDByWalletAddress,getUidUsingVoucherId} from '../utils/db_helper.js';
-import { getSigner } from "../services/biconomyService.js";
+import { fetchBaseURI,fetchNetworkFromVoucherId, fetchAccountIdByWalletAddress,updateBaseURI,getContractAddressByVoucherId,update_Voucher, insertOrUpdateNFTMetadata,fetchSmartAccountIDBySmartAccountAddress, createSmartAccountContract, fetchSmartAccountByWalletAddress ,fetchUIDByWalletAddress,getUidUsingVoucherId} from '../utils/db_helper.js';
+import { getSigner,getSigner_network } from "../services/biconomyService.js";
 import { ethers } from 'ethers';
 import {update_processFiles} from "../services/firestorage.js"
 import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@biconomy/account';
@@ -8,28 +8,32 @@ import dotenv from 'dotenv';
 dotenv.config();
 export const createVoucher = async (req, res) => {
     const {  wallet_data } = req.auth;
-    const { description, name, status, latitude, longitude } = req.body;
+    const { description, name, status, latitude, longitude,network } = req.body;
 
     try {
         if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
+        
+        if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+            return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        }
 
-        const signerInstance = getSigner(wallet_data);
-        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-            console.error('Invalid or undefined signer address:', signerInstance);
+        const { signer, config } = getSigner_network(wallet_data, network);
+        if (!signer || !ethers.isAddress(signer.address)) {
+            console.error('Invalid or undefined signer address:', signer.address);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
 
-        const wallet_address = signerInstance.address;
+        const wallet_address = signer.address;
         const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
         if (!SmartAccountId) {
             return res.status(404).json({ error: 'Smart account not found' });
         }
         const uid = await fetchUIDByWalletAddress(wallet_address)
         const result = await db.query(
-            'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6, $5), 4326), $5, $6, now()) RETURNING *',
-            [SmartAccountId, name, description, status, latitude, longitude]
+            'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude,network, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6, $5), 4326), $5, $6,$7, now()) RETURNING *',
+            [SmartAccountId, name, description, status, latitude, longitude, network]
         );
         res.status(201).json({ ...result.rows[0], uid });
     } catch (error) {
@@ -110,19 +114,20 @@ export const deleteVoucher = async (req, res) => {
 
 export const getVouchersBySmartAccountId = async (req, res) => {
     const { wallet_data } = req.auth;
-
     try {
         if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
+        
+        
+        const { signer } = getSigner(wallet_data);
 
-        const signerInstance = getSigner(wallet_data);
-        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-            console.error('Invalid or undefined signer address:', signerInstance);
+        if (!signer || !ethers.isAddress(signer.address)) {
+            console.error('Invalid or undefined signer address:', signer);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
 
-        const wallet_address = signerInstance.address;
+        const wallet_address = signer.address;
         const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
         if (!SmartAccountId) {
             return res.status(404).json({ error: 'Smart account not found' });
@@ -163,13 +168,13 @@ export const getVouchersBySmartAccountId_Status = async (req, res) => {
             return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
 
-        const signerInstance = getSigner(wallet_data);
-        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-            console.error('Invalid or undefined signer address:', signerInstance);
+        const { signer } = getSigner(wallet_data);
+        if (!signer || !ethers.isAddress(signer.address)) {
+            console.error('Invalid or undefined signer address:', signer.address);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
 
-        const wallet_address = signerInstance.address;
+        const wallet_address = signer.address;
         const SmartAccountId = await fetchAccountIdByWalletAddress(wallet_address);
         if (!SmartAccountId) {
             return res.status(404).json({ error: 'Smart account not found' });
@@ -273,13 +278,13 @@ export const getCollectedVouchers = async (req, res) => {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
 
-    const signerInstance = getSigner(wallet_data);
-    if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-        console.error('Invalid or undefined signer address:', signerInstance);
+    const { signer } = getSigner(wallet_data);
+    if (!signer || !ethers.isAddress(signer.address)) {
+        console.error('Invalid or undefined signer address:', signer);
         return res.status(400).json({ error: 'Invalid or undefined signer address' });
     }
 
-    const wallet_address = signerInstance.address;
+    const wallet_address = signer.address;
 
     try {
         const smartAccountAddress = await fetchSmartAccountByWalletAddress(wallet_address);
@@ -314,10 +319,11 @@ export const getCollectedVouchers = async (req, res) => {
 
 
 export const updateVoucherAndMetadata = async (req, res) => {
-    const { voucher_id, name, description, status, latitude, longitude } = req.body;
+    const { voucher_id, name, description, status, latitude, longitude   } = req.body;
     const { wallet_data,uid } = req.auth;
     const images = req.files['images'] || [];
     const metadataFiles = req.files['metadata'] || [];
+    const network =await  fetchNetworkFromVoucherId(voucher_id);
 
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
@@ -326,16 +332,18 @@ export const updateVoucherAndMetadata = async (req, res) => {
     if (uid_voucher_id !== uid) {
         return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
     }
+    
+   
     try {
-        const signerInstance = getSigner(wallet_data);
-        if (!signerInstance || !ethers.isAddress(signerInstance.address)) {
-            console.error('Invalid or undefined signer address:', signerInstance);
+        const { signer ,config} = getSigner_network(wallet_data,network);
+        if (!signer || !ethers.isAddress(signer.address)) {
+            console.error('Invalid or undefined signer address:', signer);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
         }
         if (!voucher_id) {
             return res.status(400).json({ error: 'voucher_id requiredd' });
         }
-    
+
         // Update voucher
         const updatedVoucher = await update_Voucher(voucher_id, { name, description, status, latitude, longitude });
 
@@ -343,7 +351,7 @@ export const updateVoucherAndMetadata = async (req, res) => {
         if (images.length > 0 && metadataFiles.length > 0) {
             const { baseURI, firebaseImageUrls } = await update_processFiles(images, metadataFiles, voucher_id);
             await updateBaseURI(voucher_id, baseURI);
-
+            
             const contractAddress = await getContractAddressByVoucherId(voucher_id);
             const updateMetadataFunctionData = new ethers.Interface([
                 " function metadata_update(string memory _baseURI)"
@@ -355,12 +363,16 @@ export const updateVoucherAndMetadata = async (req, res) => {
                 data: updateMetadataFunctionData
             };
 
-            const biconomySmartAccount = await createSmartAccountClient({
-                signer: signerInstance,
-                biconomyPaymasterApiKey: process.env.PAYMASTER_KEY,
-                bundlerUrl: process.env.BUNDLER_URL
+            const paymaster = await createPaymaster({
+                paymasterUrl: config.PAYMASTER_URL,
+                strictMode: true,
             });
-
+          
+            const biconomySmartAccount = await createSmartAccountClient({
+                signer,
+                paymaster,
+                bundlerUrl: config.BUNDLER_URL,
+            });
             const txResponse = await biconomySmartAccount.sendTransaction(tx, {
                 paymasterServiceData: { mode: PaymasterMode.SPONSORED }
             });

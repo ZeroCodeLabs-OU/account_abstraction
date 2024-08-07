@@ -1,7 +1,7 @@
 import { createSmartAccountClient, createPaymaster ,PaymasterMode} from '@biconomy/account';
 import {ethers} from 'ethers';
 import db from '../config/dbConfig.js';
-import { getSigner } from '../services/biconomyService.js';
+import { getSigner,getSigner_network } from '../services/biconomyService.js';
 import contractJson from '../utils/contracts/erc1155.json' assert { type: 'json' };
 const { abi, bytecode } = contractJson;
 import { processFiles } from '../services/firestorage.js';
@@ -23,22 +23,27 @@ dotenv.config();
 
 export const createSmartAccount = async (req, res) => {
   try {
-    const { uid, wallet_data } = req.auth;
+    const { uid, wallet_data} = req.auth;
+    const { network } = req.body;
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
+    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    }
 
+    // Get signer and configuration
+    const { signer, config } = getSigner_network(wallet_data, network);
     // Setup Paymaster and other dependent services
     const paymaster = await createPaymaster({
-      paymasterUrl: process.env.PAYMASTER_URL,
+      paymasterUrl: config.PAYMASTER_URL,
       strictMode: true,
     });
 
-    const signerInstance = getSigner(wallet_data);
     const biconomySmartAccount = await createSmartAccountClient({
-      signer: signerInstance,
+      signer,
       paymaster,
-      bundlerUrl: process.env.BUNDLER_URL,
+      bundlerUrl: config.BUNDLER_URL,
     });
 
     const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
@@ -46,7 +51,7 @@ export const createSmartAccount = async (req, res) => {
     // Store in database and return the inserted data
     const result = await db.query(
       'INSERT INTO account_abstraction.smart_account (uid, wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3, $4) RETURNING *',
-      [uid, signerInstance.address, smartAccountAddress, new Date()],
+      [uid, signer.address, smartAccountAddress, new Date()],
     );
 
     res.status(201).json(result.rows[0]);
@@ -71,11 +76,10 @@ export const createSmartAccount = async (req, res) => {
 export const getSmartAccount = async (req, res) => {
   try {
     const { uid, wallet_data } = req.auth;
-    const signerInstance = getSigner(wallet_data);
-        // const { walletAddress } = req.body;
+    const { signer } = getSigner(wallet_data);
 
 
-    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [signerInstance.address]);
+    const result = await db.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [signer.address]);
     if (result.rows.length) {
       res.status(200).json(result.rows[0]);
     } else {
@@ -102,7 +106,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       longitude, 
       tokenQuantity,
       max_token_per_mint, 
-      max_token_per_person 
+      max_token_per_person,network
     } = req.body;
 
     const images = req.files['images'] || [];
@@ -113,16 +117,29 @@ export const createAndDeploySmartAccount = async (req, res) => {
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-    const signerInstance = getSigner(wallet_data);
-    const walletAddress = signerInstance.address;
+    
+    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    }
+
+    const { signer, config } = getSigner_network(wallet_data, network);
+    const walletAddress = signer.address;
     const existingAccount = await client.query('SELECT * FROM account_abstraction.smart_account WHERE wallet_address = $1', [walletAddress]);
 
     let smartAccountId;
     if (existingAccount.rows.length) {
       smartAccountId = existingAccount.rows[0].id;
     } else {
-      const paymaster = await createPaymaster({ paymasterUrl: process.env.PAYMASTER_URL, strictMode: true });
-      const biconomySmartAccount = await createSmartAccountClient({ signer: signerInstance, paymaster, bundlerUrl: process.env.BUNDLER_URL });
+      const paymaster = await createPaymaster({
+        paymasterUrl: config.PAYMASTER_URL,
+        strictMode: true,
+      });
+  
+      const biconomySmartAccount = await createSmartAccountClient({
+        signer,
+        paymaster,
+        bundlerUrl: config.BUNDLER_URL,
+      });
       const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
       const result = await client.query(
         'INSERT INTO account_abstraction.smart_account (uid, wallet_address, smart_account_address, created_at) VALUES ($1, $2, $3, $4) RETURNING id',
@@ -136,20 +153,23 @@ export const createAndDeploySmartAccount = async (req, res) => {
     console.log('Values:', [smartAccountId, name, description, status, lat, lon]);
 
     const voucherResult = await client.query(
-      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6, now()) RETURNING id',
-      [smartAccountId, name, description, status, lat, lon]
+      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude,network, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6,$7, now()) RETURNING id',
+      [smartAccountId, name, description, status, lat, lon,network]
     );
     const voucherId = voucherResult.rows[0].id;
 
     await processFiles(images, metadataFiles, voucherId);
 
-    const paymaster = await createPaymaster({ paymasterUrl: process.env.PAYMASTER_URL });
-    const biconomySmartAccount = await createSmartAccountClient({
-      signer: signerInstance,
-      paymaster,
-      bundlerUrl: process.env.BUNDLER_URL,
+    const paymaster = await createPaymaster({
+      paymasterUrl: config.PAYMASTER_URL,
+      strictMode: true,
     });
 
+    const biconomySmartAccount = await createSmartAccountClient({
+      signer,
+      paymaster,
+      bundlerUrl: config.BUNDLER_URL,
+    });
     const randomSalt = ethers.hexlify(ethers.randomBytes(32));
     const deployData = new ethers.Interface([
       "function deploy(bytes32 _salt, bytes _creationCode) external returns (address)",
@@ -220,7 +240,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       name,
       description: "",
       contractAddress: deployedAddress,
-      chain: "MATIC_AMOY",
+      chain: network,
       type: "ERC1155",
       baseUri: base_URI,
       tokenSymbol: name.slice(0, 4),
