@@ -44,7 +44,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/get_voucher/:voucher_id',authenticateToken, getVoucherById);
   app.put('/update_voucher/:voucher_id',authenticateToken ,updateVoucher);
   app.delete('/delete_voucher/:voucher_id',authenticateToken, deleteVoucher);
-  app.get('/vouchers_by_wallet_address/:wallet_address',authenticateToken ,getVouchersBySmartAccountId);
+  app.get('/vouchers_by_wallet_address',authenticateToken ,getVouchersBySmartAccountId);
   app.post('/vouchers/vouchers_by_status/:voucher_id',authenticateToken, updateVoucherStatus);
   app.get('/vouchers/vouchers_by_status',authenticateToken, getVouchersBySmartAccountId_Status);
   app.get('/vouchers/by-location',authenticateToken, getVouchersByLocationAndRadius);
