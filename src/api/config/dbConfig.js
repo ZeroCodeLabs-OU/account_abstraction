@@ -10,6 +10,9 @@ const pool = new Pool({
   database: process.env.DATABASE_DB,
   password: process.env.PASSWORD_DB,
   port: process.env.PORT_DB,
+  ssl: {
+    rejectUnauthorized: false  // This allows connecting without strict SSL verification
+}
 });
 
 export default pool;
