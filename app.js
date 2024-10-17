@@ -1,31 +1,72 @@
-const express = require('express');
-const app = express();
-const validate = require('./src/api/middleware/validate'); 
-require('dotenv').config();
-const voucherController = require('./src/api/controllers/voucherController');
-const walletController = require('./src/api/controllers/walletController');
-const contractController = require('./src/api/controllers/contractController');
+import express from 'express';
+import multer from 'multer';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const { createSmartAccountSchema, getSmartAccountSchema } = require('./src/api/middleware/validateRequest');
-const { createVoucherSchema, updateVoucherSchema,DeleteVoucherSchema } = require('./src/api/middleware/voucherSchema');
+import { processFiles } from './src/api/services/firestorage.js';
+import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
+import {
+  createVoucher, 
+  getVoucherById, 
+  updateVoucher, 
+  deleteVoucher, 
+  getVouchersBySmartAccountId, 
+  getVouchersBySmartAccountId_Status, 
+  getVouchersByLocationAndRadius, 
+  updateVoucherStatus, 
+  getCollectedVouchers 
+} from './src/api/controllers/voucherController.js';
+import { getSmartAccount, createSmartAccount ,createAndDeploySmartAccount} from './src/api/controllers/walletController.js';
+import {
+  deploySmartContract,
+  mintTokens,
+  revokeTokens,
+} from './src/api/controllers/contractController.js';
+import { generateQRData, decryptAndRevoke } from './src/api/controllers/qrController.js';
+const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.send('server test working');
+  res.send('Server test working');
 });
-//smart_account
-app.post('/createSmartAccount', validate(createSmartAccountSchema), walletController.createSmartAccount);
-app.get('/getSmartAccount', validate(getSmartAccountSchema), walletController.getSmartAccount);
 
-//voucher
-app.post('/create_voucher', validate(createVoucherSchema),voucherController.createVoucher);
-app.get('/get_voucher/:voucher_id',voucherController.getVoucherById);
-app.put('/update_voucher/:voucher_id', validate(updateVoucherSchema),voucherController.updateVoucher);
-app.delete('/delete_voucher/:voucher_id', voucherController.deleteVoucher);
-app.get('/vouchers/smart_account/:smart_account_id', voucherController.getVouchersBySmartAccountId);
+// Smart account
+app.post('/createSmartAccount',authenticateToken, createSmartAccount);
+  app.get('/getSmartAccount', authenticateToken,getSmartAccount);
 
-//contract
-app.post('/deploy_contract', contractController.deploySmartContract);
+  // voucher
+  app.post('/create_voucher',authenticateToken, createVoucher);
+  app.get('/get_voucher/:voucher_id',authenticateToken, getVoucherById);
+  app.put('/update_voucher/:voucher_id',authenticateToken ,updateVoucher);
+  app.delete('/delete_voucher/:voucher_id',authenticateToken, deleteVoucher);
+  app.get('/vouchers_by_wallet_address/:wallet_address',authenticateToken ,getVouchersBySmartAccountId);
+  app.post('/vouchers/vouchers_by_status/:voucher_id',authenticateToken, updateVoucherStatus);
+  app.get('/vouchers/vouchers_by_status',authenticateToken, getVouchersBySmartAccountId_Status);
+  app.get('/vouchers/by-location',authenticateToken, getVouchersByLocationAndRadius);
+  app.get('/vouchers/collected',authenticateToken, getCollectedVouchers);
 
+  // contract interaction,
+  app.post('/deploy_contract',authenticateToken, deploySmartContract);
+  app.post('/mint',authenticateToken, mintTokens);
+  app.post('/revoke',authenticateToken, revokeTokens);
+
+  // QR
+  app.post('/generate-qr-data',authenticateToken, generateQRData);
+  app.post('/decrypt-and-revoke',authenticateToken, decryptAndRevoke);
+
+  //Combined endpoint
+  app.post('/complete-process',authenticateToken, upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), createAndDeploySmartAccount);
+
+
+
+// Error handling for unauthorized access
+app.use((err, req, res, next) => {
+  if (err.name === 'UnauthorizedError') {
+    res.status(401).send('Unauthorized: No token provided or token was invalid');
+  }
+});
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
