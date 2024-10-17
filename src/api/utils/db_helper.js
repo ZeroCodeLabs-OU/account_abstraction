@@ -22,7 +22,7 @@ async function fetchAccountIdByWalletAddress(walletAddress) {
     if (result.rows.length > 0) {
       return result.rows[0].id;
     } else {
-      throw new Error("No account found for the given wallet address");
+      throw new Error("No Voucher found for the given voucher_id");
     }
   } catch (err) {
     console.error("Database error while fetching account id:", err);
