@@ -112,12 +112,12 @@ export const generateQRData = async (req, res) => {
 
 export const decryptAndRevoke = async (req, res) => {
     const { encryptedData, qrDataId } = req.body;
-    const { wallet_data ,uid} = req.auth;
+    const { wallet_data, uid } = req.auth;
 
     if (!encryptedData || !qrDataId) {
         return res.status(400).json({ error: 'Missing required parameters' });
     }
-    
+
     try {
         // Decrypt the QR data
         const decipher = crypto.createDecipher('aes-256-cbc', process.env.QR_SECRET);
@@ -128,24 +128,25 @@ export const decryptAndRevoke = async (req, res) => {
 
         // Parse the decrypted data
         const parsedData = JSON.parse(decryptedData);
-        const { walletAddress, contractAddress, tokenId, amount, voucherId,network } = parsedData;
+        const { walletAddress, contractAddress, tokenId, amount, voucherId, network } = parsedData;
         const uid_voucher_id = await getUidUsingVoucherId(voucherId);
         if (uid_voucher_id !== uid) {
-             return res.status(400).json({ error: ' Invalid Voucher_Id is not the owner of voucher' });
+            return res.status(400).json({ error: 'Invalid Voucher_Id: not the owner of the voucher' });
         }
+        
         // Check if QR data is expired
         const result = await db.query(`SELECT expiration FROM account_abstraction.qr_data WHERE id = $1`, [qrDataId]);
         if (result.rows.length === 0) {
             return res.status(400).json({ error: 'QR data not found' });
         }
-        
-        
+
         const expirationDate = new Date(result.rows[0].expiration);
         if (expirationDate < new Date()) {
             return res.status(400).json({ error: 'QR data has expired' });
         }
+
         // Get signer instance
-        const { signer,config } = getSigner_network(wallet_data,network);
+        const { signer, config } = getSigner_network(wallet_data, network);
         if (!signer || !ethers.isAddress(signer.address)) {
             console.error('Invalid or undefined signer address:', signer);
             return res.status(400).json({ error: 'Invalid or undefined signer address' });
@@ -156,12 +157,13 @@ export const decryptAndRevoke = async (req, res) => {
             paymasterUrl: config.PAYMASTER_URL,
             strictMode: true,
         });
-      
+
         const biconomySmartAccount = await createSmartAccountClient({
             signer,
             paymaster,
             bundlerUrl: config.BUNDLER_URL,
         });
+
         // Get contract address using voucher ID
         const contractAddr = await getContractAddressByVoucherId(voucherId);
 
@@ -175,19 +177,20 @@ export const decryptAndRevoke = async (req, res) => {
             "function balanceOf(address account, uint256 id) public view returns (uint256)"
         ];
         const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
-        const contract = new ethers.Contract(contractAddr.contract_address, contractABI,provider );
+        const contract = new ethers.Contract(contractAddr.contract_address, contractABI, provider);
 
         // Call the balanceOf function directly
         const balance = await contract.balanceOf(walletAddress, tokenId);
         const balanceNumber = parseInt(balance.toString(), 10);
         const amountNumber = parseInt(amount, 10);
         console.log("Balance Number:", balanceNumber);
-        console.log("Amount Number:", amountNumber);;
+        console.log("Amount Number:", amountNumber);
 
         if (balanceNumber < amountNumber) {  // Check if balance is less than the amount
             console.log('Insufficient balance:', balanceNumber, 'needed:', amountNumber);
             return res.status(400).json({ error: 'Insufficient balance' });
         }
+
         // Revoke the NFT
         const revokeFunctionData = new ethers.Interface([
             "function revoke(address from, uint256 id, uint256 amount)"
@@ -197,26 +200,46 @@ export const decryptAndRevoke = async (req, res) => {
             to: contractAddr.contract_address,
             data: revokeFunctionData
         };
-        const txResponse = await biconomySmartAccount.sendTransaction(tx, {
-            paymasterServiceData: { mode: PaymasterMode.SPONSORED }
-        });
-        const txReceipt = await txResponse.wait();
 
-        console.log("Transaction Receipt:", txReceipt);
+        // Retry transaction logic
+        const retryTransaction = async (retryCount = 0) => {
+            try {
+                const txResponse = await biconomySmartAccount.sendTransaction(tx, {
+                    paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+                });
+                const txReceipt = await txResponse.wait();
 
-        if (txReceipt.success == "false") {
-            throw new Error('Revoke transaction failed');
-        }
+                console.log("Transaction Receipt:", txReceipt);
 
-        console.log('Revoke transaction successful:', txReceipt);
+                if (txReceipt.success === "false") {
+                    throw new Error('Revoke transaction failed');
+                }
 
-        // Update the mint database to mark as revoked
-        await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2 AND smart_account_address = $3`, [voucherId, tokenId, walletAddress]);
+                console.log('Revoke transaction successful:', txReceipt);
 
-        res.status(200).json({ message: 'NFT revoked successfully', txReceipt });
+                // Update the mint database to mark as revoked
+                await db.query(`UPDATE account_abstraction.nft_tx_mint SET revoked = true WHERE voucher_id = $1 AND token_id = $2 AND smart_account_address = $3`, [voucherId, tokenId, walletAddress]);
+
+                res.status(200).json({ message: 'NFT revoked successfully', txReceipt });
+            } catch (error) {
+                if (retryCount < 3) {
+                    const delay = 2000 + (retryCount * 1000); // Wait time: 2s, 3s, 4s
+                    console.error(`Error revoking NFT (attempt ${retryCount + 1}), retrying in ${delay / 1000}s...`, error);
+
+                    // Wait before retrying
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    await retryTransaction(retryCount + 1); // Retry again
+                } else {
+                    console.error('Max retries reached. Error revoking NFT:', error);
+                    return res.status(500).json({ error: 'Internal server error during revocation', details: error.message });
+                }
+            }
+        };
+
+        // Start the first transaction attempt
+        await retryTransaction();
     } catch (error) {
         console.error('Error decrypting and revoking NFT:', error);
         res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 };
-

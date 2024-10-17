@@ -106,7 +106,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       longitude, 
       tokenQuantity,
       max_token_per_mint, 
-      max_token_per_person,network
+      max_token_per_person, network
     } = req.body;
 
     const images = req.files['images'] || [];
@@ -114,6 +114,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
     console.log("Request body:", req.body);
     console.log("Images:", images);
     console.log("Metadata files:", metadataFiles);
+    
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
@@ -147,15 +148,16 @@ export const createAndDeploySmartAccount = async (req, res) => {
       );
       smartAccountId = result.rows[0].id;
     }
+    
     const lat = parseFloat(latitude);
     const lon = parseFloat(longitude);
-
     console.log('Values:', [smartAccountId, name, description, status, lat, lon]);
 
     const voucherResult = await client.query(
-      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude,network, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6,$7, now()) RETURNING id',
-      [smartAccountId, name, description, status, lat, lon,network]
+      'INSERT INTO account_abstraction.voucher (smart_account_id, name, description, status, location, latitude, longitude, network, created_at) VALUES ($1, $2, $3, $4, account_abstraction.ST_SetSRID(account_abstraction.ST_MakePoint($6::double precision, $5::double precision), 4326), $5, $6, $7, now()) RETURNING id',
+      [smartAccountId, name, description, status, lat, lon, network]
     );
+    
     const voucherId = voucherResult.rows[0].id;
 
     await processFiles(images, metadataFiles, voucherId);
@@ -170,6 +172,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       paymaster,
       bundlerUrl: config.BUNDLER_URL,
     });
+    
     const randomSalt = ethers.hexlify(ethers.randomBytes(32));
     const deployData = new ethers.Interface([
       "function deploy(bytes32 _salt, bytes _creationCode) external returns (address)",
@@ -181,14 +184,26 @@ export const createAndDeploySmartAccount = async (req, res) => {
       data: deployData,
     };
 
-    const deployResponse = await biconomySmartAccount.sendTransaction(txDeploy, {
+    // Retry mechanism
+    const retry = async (fn, retries = 3, delay = 1000) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          return await fn();
+        } catch (error) {
+          if (i === retries - 1) throw error; // Re-throw error if out of retries
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    };
+
+    const deployResponse = await retry(() => biconomySmartAccount.sendTransaction(txDeploy, {
       paymasterServiceData: { mode: 'SPONSORED' }
-    });
+    }));
+
     const receiptDeploy = await deployResponse.wait();
 
     if (!receiptDeploy.success) {
-      res.status(500).json({ error: 'Deployment transaction failed' });
-      return;
+      return res.status(500).json({ error: 'Deployment transaction failed' });
     }
 
     const addressData = new ethers.Interface([
@@ -201,12 +216,11 @@ export const createAndDeploySmartAccount = async (req, res) => {
     });
 
     const deployedAddress = '0x' + computedAddress.slice(26);
-
     const base_URI = await fetchBaseURI(voucherId);
     
     const publicMintStart = Math.floor(Date.now() / 1000);
     const presaleMintStart = Math.floor(Date.now() / 1000) + 86400;
-    const tokenQ=parseJsonField(tokenQuantity)
+    const tokenQ = parseJsonField(tokenQuantity);
     const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
     const initData = encodeInitializationData(
       name,
@@ -225,15 +239,16 @@ export const createAndDeploySmartAccount = async (req, res) => {
       data: initData
     };
 
-    const initResponse = await biconomySmartAccount.sendTransaction(initTx, {
+    const initResponse = await retry(() => biconomySmartAccount.sendTransaction(initTx, {
       paymasterServiceData: { mode: 'SPONSORED' }
-    });
+    }));
+
     const initReceipt = await initResponse.wait();
 
     if (!initReceipt.success) {
-      res.status(500).json({ error: 'Initialization transaction failed' });
-      return;
+      return res.status(500).json({ error: 'Initialization transaction failed' });
     }
+    
     const contractResponse = await createSmartAccountContract({
       smartAccountId,
       voucherId,
@@ -246,7 +261,7 @@ export const createAndDeploySmartAccount = async (req, res) => {
       tokenSymbol: name.slice(0, 4),
       royaltyShare: 0,
       maxSupply: tokenQ.length,
-      tokenQuantity : parseJsonField(tokenQuantity),
+      tokenQuantity: parseJsonField(tokenQuantity),
       teamReserved: 0,
       maxPerPerson: parseJsonField(max_token_per_person),
       maxPerTransaction: parseJsonField(max_token_per_mint),
@@ -259,18 +274,16 @@ export const createAndDeploySmartAccount = async (req, res) => {
       externalContract: false
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Smart account and contract deployed successfully",
-      "smart_contract_id":contractResponse,
-      "voucherId":voucherId,
-      "uid":uid
+      smart_contract_id: contractResponse,
+      voucherId: voucherId,
+      uid: uid
     });
   } catch (error) {
     console.error('Error in execution:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     client.release();
   }
 };
-
-
