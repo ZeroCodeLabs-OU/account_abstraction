@@ -187,7 +187,9 @@ export const createAndDeploySmartAccount = async (req, res) => {
     // Retry mechanism
     const retry = async (fn, retries = 3, delay = 1000) => {
       for (let i = 0; i < retries; i++) {
+        delay = delay + 1000;
         try {
+          console.error(`Error deploying  contract (attempt ${i + 1}), retrying in ${delay/1000}s...`);
           return await fn();
         } catch (error) {
           if (i === retries - 1) throw error; // Re-throw error if out of retries
