@@ -13,6 +13,7 @@
   "dependencies": {
     "@biconomy/account": "^4.4.2",
     "crypto": "^1.0.1",
+    "csv-parse": "^5.6.0",
     "dotenv": "^16.4.5",
     "entry-point-gas-estimations": "^0.0.19",
     "ethers": "^6.12.1",
