@@ -19,31 +19,16 @@ import {
 import { getSmartAccount, createSmartAccount ,createAndDeploySmartAccount} from './src/api/controllers/walletController.js';
 import {
   deploySmartContract,
-  mintTokens,deployDistributionContract,
-  revokeTokens,setBulkAllowancesFromCSV,withdrawTokens,getWithdrawalAmount
+  mintTokens,
+  revokeTokens
 } from './src/api/controllers/contractController.js';
 import { generateQRData, decryptAndRevoke } from './src/api/controllers/qrController.js';
+import {getERC20Balance,depositToPool,withdrawUSDC,batchSendUSDC,getPoolTreasuryInfo,addPoolAllocation,resetPoolAllocation,executePoolTransfers,batchAddPoolAllocations} from './src/api/controllers/CashBackContractController.js';
+
 const app = express();
-// const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage() });
 const storage = multer.memoryStorage();
-const upload = multer({
-    storage: storage,
-    limits: {
-        fileSize: 1024 * 1024 // 1MB limit
-    },
-    fileFilter: (req, file, cb) => {
-        console.log('Received file:', file);
-        console.log('Mimetype:', file.mimetype);
-        console.log('Fieldname:', file.fieldname);
-        
-        if (file.fieldname === 'file' && 
-            file.mimetype !== 'text/csv' && 
-            file.mimetype !== 'application/vnd.ms-excel') {
-            return cb(new Error('Only CSV files are allowed for bulk allowances'));
-        }
-        cb(null, true);
-    }
-});
+
 
 app.use(express.json());
 
@@ -84,28 +69,25 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
   // update voucher 
   app.put('/update-voucher', authenticateToken, upload.fields([{ name: 'images', maxCount: 100 }, { name: 'metadata', maxCount: 100 }]), updateVoucherAndMetadata);
- 
-  app.post('/deployDistributionContract',authenticateToken, deployDistributionContract);
-  app.post('/set-bulk-allowances-csv', 
-    authenticateToken,
-    (req, res, next) => {
-        console.log('Hit bulk allowances endpoint');
-        upload.single('file')(req, res, (err) => {
-            if (err) {
-                console.error('Multer error:', err);
-                return res.status(400).json({ error: err.message });
-            }
-            next();
-        });
-    },
-    setBulkAllowancesFromCSV
-);
 
-// For checking withdrawal amount
-app.get('/get-withdrawal-amount', authenticateToken, getWithdrawalAmount);
 
-// For withdrawing tokens
-app.post('/withdraw-tokens', authenticateToken, withdrawTokens);
+  // get erc20 balance
+  app.get('/get-erc20-balance', authenticateToken, getERC20Balance);
+  // withdraw usdc
+  app.post('/withdraw-usdc', authenticateToken, withdrawUSDC);
+  // deposit to pool
+  app.post('/deposit-to-pool', authenticateToken, depositToPool);
+  //batch transfer
+  app.post('/batch-transfer',authenticateToken, batchSendUSDC);
+
+  // Operator functions
+  app.post('/pool/add-allocation',authenticateToken, addPoolAllocation);
+  app.post('/pool/batch-add-allocations',authenticateToken, batchAddPoolAllocations);
+  app.post('/pool/reset-allocation',authenticateToken, resetPoolAllocation);
+  app.post('/pool/execute-transfers',authenticateToken, executePoolTransfers);
+
+// View functions
+  app.get('/pool/treasury-info',authenticateToken, getPoolTreasuryInfo);
 
 // Error handling for unauthorized access
 app.use((err, req, res, next) => {
