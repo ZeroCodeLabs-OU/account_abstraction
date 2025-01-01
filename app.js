@@ -4,6 +4,8 @@ import morgan from 'morgan';
 import express from 'express';
 import multer from 'multer';
 
+
+
 import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
 import {
   createVoucher, 
@@ -25,16 +27,23 @@ import {
 import { generateQRData, decryptAndRevoke } from './src/api/controllers/qrController.js';
 import {getERC20Balance,depositToPool,withdrawUSDC,batchSendUSDC,getPoolTreasuryInfo,addPoolAllocation,resetPoolAllocation,executePoolTransfers,batchAddPoolAllocations} from './src/api/controllers/CashBackContractController.js';
 
+
+
+import {stripeController  } from './src/api/controllers/stripeController.js';
+
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const storage = multer.memoryStorage();
 
+app.post('/webhook', express.raw({type: 'application/json'}), stripeController.handleWebhook);
 
 app.use(express.json());
 
 app.get('/', (req, res) => {
   res.send('Server test working');
 });
+
 app.use(morgan('dev'));
 
 // Smart account
@@ -86,16 +95,39 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/pool/reset-allocation',authenticateToken, resetPoolAllocation);
   app.post('/pool/execute-transfers',authenticateToken, executePoolTransfers);
 
-// View functions
+
   app.get('/pool/treasury-info',authenticateToken, getPoolTreasuryInfo);
 
-// Error handling for unauthorized access
-app.use((err, req, res, next) => {
-  if (err.name === 'UnauthorizedError') {
-    res.status(401).send('Unauthorized: No token provided or token was invalid');
-  }
-});
-const PORT = process.env.PORT || 9000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  
+  
+  
+  //stripe
+  app.post('/create-checkout', stripeController.createCheckoutSession);
+  app.get('/pools/:poolId/subscriptions', stripeController.getSubscriptionsByPoolId);
+  app.get('/pools/:poolId/balance', stripeController.getPoolBalance);
+  app.post('/pools/:poolId/cancel', stripeController.cancelSubscription);
+  app.use((err, req, res, next) => {
+    if (err.name === 'UnauthorizedError') {
+      res.status(401).send('Unauthorized: No token provided or token was invalid');
+    }
+  });
+  const PORT = process.env.PORT || 9000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+
+
+
+
+
+
+
+//added the credit card details on the subscription table  -done  
+//create the endpoint to get the subscription details by pool id -done
+//test when there is a new payment on existing subscription -done
+//create endpoints to get pool balance -done 
+//create endpoint to cancel subscription -done        
+//create endpoint to change subscription plan or cahnge the mode of payment 
+//webhook for stripe payout to the bank and database changes to register it -done need to be tested
+//automate the failure count cancel subscription option talk to -stan
+//write test using the timer to check if the subscription is active
