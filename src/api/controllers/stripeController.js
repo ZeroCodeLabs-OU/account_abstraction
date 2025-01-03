@@ -57,7 +57,6 @@ export const stripeController = {
           break;
 
         case 'invoice.paid':
-        case 'invoice.payment_succeeded':
           await handleInvoicePaid(event.data.object);
           break;
 
@@ -89,6 +88,179 @@ export const stripeController = {
         stack: error.stack
       });
       res.status(200).json({ received: true });
+    }
+  },
+
+  async  setupPortalConfiguration() {
+    try {
+      const configuration = await stripe.billingPortal.configurations.create({
+        business_profile: {
+          headline: 'Zero-Code Labs',
+        },
+        features: {
+          subscription_cancel: {
+            enabled: true,
+            mode: 'immediately',
+            proration_behavior: 'none'
+          },
+          payment_method_update: { enabled: true },
+          customer_update: {
+            enabled: true,
+            allowed_updates: ['email', 'address']
+          }
+        },
+        default_return_url: process.env.FRONTEND_URL
+      });
+  
+      console.log('Created portal configuration:', configuration.id);
+      return configuration.id;
+    } catch (error) {
+      console.error('Error creating portal configuration:', error);
+      throw error;
+    }
+  }
+,  
+async  createUpdateSession(req, res) {
+  try {
+    const { poolId } = req.params;
+    
+    // First get subscription details from pool_id
+    const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+    
+    if (!subscriptions || subscriptions.length === 0) {
+      return res.status(404).json({ error: 'No subscription found for this pool' });
+    }
+
+    const customer_id = subscriptions[0].customer_id;
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customer_id,
+      return_url: `${process.env.FRONTEND_URL}/account`,
+      configuration: process.env.STRIPE_PORTAL_CONFIG_ID
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating portal session:', error);
+    res.status(500).json({ error: error.message });
+  }
+}
+,
+async  createTestPayout(req, res) {
+  try {
+    const { poolId } = req.params;
+
+    // 1. Get subscription data
+    const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+    if (!subscriptions.length) {
+      return res.status(404).json({ error: 'No subscription found for this pool' });
+    }
+
+    const subscription = subscriptions[0];
+
+    // Convert the amount to an integer (paise for INR)
+    const amountInSmallestUnit = Math.round(subscription.amount);
+
+    // 2. Create a Payment Intent
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInSmallestUnit, // Ensure this is an integer
+      currency: subscription.currency,
+      customer: subscription.customer_id,
+      payment_method: subscription.payment_method_id,
+      off_session: true,
+      confirm: true,
+      metadata: {
+        subscription_id: subscription.subscription_id,
+        pool_id: poolId
+      }
+    });
+
+    // 3. Create a test payout
+    const payout = await stripe.payouts.create({
+      amount: amountInSmallestUnit,
+      currency: subscription.currency,
+      metadata: {
+        test_payment_intent_id: paymentIntent.id,
+        pool_id: poolId,
+        is_test: true
+      }
+    });
+
+    res.json({
+      message: 'Test payout created',
+      data: {
+        payment_intent_id: paymentIntent.id,
+        payout_id: payout.id,
+        amount: amountInSmallestUnit / 100,
+        currency: subscription.currency
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating test payout:', error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
+,
+  async  updateSubscriptionPrice(req, res) {
+    try {
+      const { poolId } = req.params;
+      const { new_amount } = req.body;
+  
+      // First get subscription details from pool_id
+      const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+      if (!subscriptions || subscriptions.length === 0) {
+        return res.status(404).json({ error: 'No subscription found for this pool' });
+      }
+  
+      const subscription_id = subscriptions[0].subscription_id; // Get the first active subscription
+  
+      // Get current subscription from Stripe
+      const subscription = await stripe.subscriptions.retrieve(subscription_id);
+  
+      // Create new price
+      const newPrice = await stripe.prices.create({
+        unit_amount: new_amount,
+        currency: subscription.currency,
+        recurring: {
+          interval: subscription.items.data[0].price.recurring.interval,
+          interval_count: subscription.items.data[0].price.recurring.interval_count
+        },
+        product: subscription.items.data[0].price.product,
+        metadata: { pool_id: poolId } // Keep pool_id in price metadata
+      });
+  
+      // Update the subscription with new price
+      const updatedSubscription = await stripe.subscriptions.update(subscription_id, {
+        items: [{
+          id: subscription.items.data[0].id,
+          price: newPrice.id,
+        }],
+        proration_behavior: 'always_invoice' // or 'create_prorations' or 'none'
+      });
+  
+      // Update our database
+      await PoolQueries.updateSubscriptionPrice({
+        subscription_id,
+        amount: new_amount,
+        metadata: {
+          previous_amount: subscription.items.data[0].price.unit_amount,
+          price_change_date: new Date().toISOString()
+        }
+      });
+  
+      res.json({
+        message: 'Subscription price updated successfully',
+        old_amount: subscription.items.data[0].price.unit_amount / 100,
+        new_amount: new_amount / 100,
+        currency: subscription.currency,
+        subscription: updatedSubscription
+      });
+  
+    } catch (error) {
+      console.error('Error updating subscription price:', error);
+      res.status(500).json({ error: error.message });
     }
   },
   async cancelSubscription(req, res) {
@@ -266,50 +438,63 @@ async function handleCheckoutCompleted(session) {
 
 async function handlePayoutPaid(payout) {
   try {
-    // Get charges in this payout
+    // Check if payout was already processed
+    const existingPayout = await PoolQueries.getPayoutById(payout.id);
+    if (existingPayout) {
+      console.log(`Payout ${payout.id} already processed, skipping`);
+      return;
+    }
+
+    // Get charges for this specific payout
     const charges = await stripe.charges.list({
-      payout: payout.id,
-      expand: ['data.balance_transaction', 'data.invoice.subscription']
+      arrival_payout: payout.id,
+      limit: 100
     });
 
-    // Group charges by pool_id
+    // Group by pool_id
     const poolPayouts = {};
     for (const charge of charges.data) {
-      if (charge.invoice?.subscription) {
-        const subscription = await stripe.subscriptions.retrieve(charge.invoice.subscription);
-        const pool_id = subscription.metadata.pool_id;
-        
-        if (pool_id) {
-          if (!poolPayouts[pool_id]) {
-            poolPayouts[pool_id] = {
-              amount: 0,
-              charges: []
-            };
+      if (charge.invoice) {
+        const invoice = await stripe.invoices.retrieve(charge.invoice);
+        if (invoice.subscription) {
+          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+          const pool_id = subscription.metadata.pool_id;
+          
+          if (pool_id) {
+            if (!poolPayouts[pool_id]) {
+              poolPayouts[pool_id] = {
+                amount: 0,
+                payments: []
+              };
+            }
+            poolPayouts[pool_id].amount += charge.amount;
+            poolPayouts[pool_id].payments.push({
+              amount: charge.amount,
+              subscription_id: invoice.subscription,
+              charge_id: charge.id,
+              invoice_id: invoice.id
+            });
           }
-          poolPayouts[pool_id].amount += charge.amount;
-          poolPayouts[pool_id].charges.push({
-            amount: charge.amount,
-            subscription_id: charge.invoice.subscription,
-            charge_id: charge.id
-          });
         }
       }
     }
 
-    // Log payout for each pool
+    // Add each pool's payout in a transaction
     for (const [pool_id, data] of Object.entries(poolPayouts)) {
-      await PoolQueries.logPayout({
+      await PoolQueries.logPayoutWithTransaction({
         payout_id: payout.id,
         pool_id,
-        amount: data.amount / 100, // Convert from cents
+        amount: data.amount / 100,
         currency: payout.currency,
         bank_arrival_date: new Date(payout.arrival_date * 1000),
         bank_account: payout.destination,
         status: payout.status,
         metadata: {
-          charges: data.charges,
+          payments: data.payments,
           statement_descriptor: payout.statement_descriptor,
-          method: payout.method
+          method: payout.method,
+          type: payout.type,
+          processed_at: new Date().toISOString()
         }
       });
     }
@@ -321,17 +506,26 @@ async function handlePayoutPaid(payout) {
 }
 
 
+
 // Handle successful invoice payments
 async function handleInvoicePaid(invoice) {
   try {
-    const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-    const pool_id = subscription.metadata.pool_id;
-    
+    // Get subscription with expanded details
+    const subscription = await stripe.subscriptions.retrieve(
+      invoice.subscription,
+      { expand: ['default_payment_method'] }
+    );
+
+    // Get pool_id from either subscription metadata or plan metadata
+    const pool_id = subscription.metadata.pool_id || 
+                    subscription.plan.metadata.pool_id;
+
     if (!pool_id) {
-      console.error('No pool_id in subscription:', subscription.id);
+      console.error('No pool_id in subscription or plan:', subscription.id);
       return;
     }
 
+    // Process the payment
     await PoolQueries.processPayment({
       subscription_id: subscription.id,
       pool_id,
@@ -342,8 +536,16 @@ async function handleInvoicePaid(invoice) {
       metadata: {
         invoice_id: invoice.id,
         customer_id: invoice.customer,
-        payment_intent: invoice.payment_intent
+        payment_intent: invoice.payment_intent,
+        subscription: subscription.id
       }
+    });
+
+    console.log('Payment processed:', {
+      subscription_id: subscription.id,
+      pool_id,
+      amount: invoice.amount_paid / 100,
+      status: 'succeeded'
     });
 
   } catch (error) {
@@ -351,6 +553,8 @@ async function handleInvoicePaid(invoice) {
     throw error;
   }
 }
+
+
 // Handle invoice payment failures
 async function handleInvoiceFailed(invoice) {
   try {

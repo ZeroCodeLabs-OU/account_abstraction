@@ -174,28 +174,36 @@ export class PoolQueries {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-  
+
+      // Check if payment already processed
+      const paymentExists = await this.executeQuery(`
+        SELECT 1 
+        FROM payment_system.payment_logs 
+        WHERE metadata->>'payment_intent' = $1
+      `, [data.metadata.payment_intent], client);
+
+      if (paymentExists.length > 0) {
+        console.log('Payment already processed:', data.metadata.payment_intent);
+        await client.query('COMMIT');
+        return;
+      }
+
+      // Get subscription with pool data
       const subscriptionData = await this.executeQuery(`
-        SELECT s.*, p.current_balance, p.currency, 
-               EXISTS (
-                 SELECT 1 
-                 FROM payment_system.payment_logs 
-                 WHERE pool_id = p.pool_id 
-                 AND event_type = 'payment.initial'
-               ) as has_initial_payment
+        SELECT s.*, p.current_balance, p.currency
         FROM payment_system.stripe_subscriptions s
         JOIN payment_system.pools p ON s.pool_id = p.pool_id
         WHERE s.subscription_id = $1
         FOR UPDATE
       `, [data.subscription_id], client);
-  
+
       if (!subscriptionData[0]) {
         throw new Error('Subscription not found');
       }
-  
+
       const sub = subscriptionData[0];
       const paymentAmount = parseFloat(data.amount) / 100;
-  
+
       if (data.status === 'succeeded') {
         // Update subscription dates
         await this.executeQuery(`
@@ -211,58 +219,51 @@ export class PoolQueries {
             updated_at = CURRENT_TIMESTAMP
           WHERE subscription_id = $1
         `, [data.subscription_id], client);
-  
-        // Only update balance if it's not the first payment
-        // For first payment, we'll set it directly instead of adding
-        const oldBalance = parseFloat(sub.current_balance);
-        const newBalance = sub.has_initial_payment ? 
-          oldBalance + paymentAmount : // For subsequent payments
-          paymentAmount;              // For first payment
-  
-        // Update with verification
-        const balanceResult = await this.executeQuery(`
+
+        // Always add payment amount to current balance
+        const oldBalance = parseFloat(sub.current_balance) || 0;
+        const newBalance = oldBalance + paymentAmount;
+
+        // Update balance
+        await this.executeQuery(`
           UPDATE payment_system.pools 
           SET 
             current_balance = $2,
             updated_at = CURRENT_TIMESTAMP
           WHERE pool_id = $1 
-          AND current_balance = $3
-          RETURNING current_balance
-        `, [sub.pool_id, newBalance.toFixed(8), oldBalance.toFixed(8)], client);
-  
-        if (!balanceResult.length) {
-          throw new Error('Balance update failed - concurrent modification');
-        }
-  
+        `, [sub.pool_id, newBalance.toFixed(8)], client);
+
         console.log('Balance updated:', {
           pool_id: sub.pool_id,
           old_balance: oldBalance,
           payment_amount: paymentAmount,
-          new_balance: newBalance,
-          is_initial_payment: !sub.has_initial_payment
+          new_balance: newBalance
         });
       }
-  
-      // Log payment with proper type
+
+      // Log the payment
       await this.logPayment({
         pool_id: sub.pool_id,
-        event_type: sub.has_initial_payment ? data.event_type : 'payment.initial',
+        subscription_id: sub.subscription_id,
+        event_type: data.event_type,
         amount: paymentAmount,
         status: data.status,
         metadata: {
           ...data.metadata,
-          is_initial_payment: !sub.has_initial_payment
+          payment_intent: data.metadata.payment_intent,
+          payment_amount: paymentAmount
         }
       }, client);
-  
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error('Payment processing error:', error);
       throw error;
     } finally {
       client.release();
     }
-  }
+}
   // Payment schedule tracking
   static async trackPaymentSchedule(subscriptionId, client) {
     try {
@@ -318,51 +319,7 @@ export class PoolQueries {
       throw error;
     }
   }
-  static async updatePoolBalance(poolId, amount, type, client = null) {
-    const shouldReleaseClient = !client;
-    client = client || await pool.connect();
-    
-    try {
-      await client.query('BEGIN');
 
-      // Get current balance with lock
-      const currentBalance = await this.executeQuery(`
-        SELECT current_balance 
-        FROM payment_system.pools 
-        WHERE pool_id = $1 
-        FOR UPDATE
-      `, [poolId], client);
-
-      if (!currentBalance.length) {
-        throw new Error('Pool not found');
-      }
-
-      const oldBalance = parseFloat(currentBalance[0].current_balance);
-      const newBalance = type === 'credit' 
-        ? oldBalance + parseFloat(amount)
-        : oldBalance - parseFloat(amount);
-
-      // Update balance
-      await this.executeQuery(`
-        UPDATE payment_system.pools 
-        SET 
-          current_balance = $2,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE pool_id = $1
-        AND current_balance = $3
-      `, [poolId, newBalance.toFixed(8), oldBalance.toFixed(8)], client);
-
-      await client.query('COMMIT');
-      return newBalance;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      if (shouldReleaseClient) {
-        client.release();
-      }
-    }
-  }
   // Log payment events
   static async logPayment(data, existingClient = null) {
     const client = existingClient || await pool.connect();
@@ -547,5 +504,93 @@ export class PoolQueries {
       WHERE pool_id = $1
       ORDER BY bank_arrival_date DESC;
     `, [poolId]);
+  }
+  static async updateSubscriptionPrice(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const result = await this.executeQuery(`
+        UPDATE payment_system.stripe_subscriptions
+        SET 
+          amount = $2,
+          metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE subscription_id = $1
+        RETURNING *;
+      `, [
+        data.subscription_id,
+        data.amount,
+        data.metadata
+      ], client);
+  
+      // Log the price change
+      await this.logPayment({
+        pool_id: result[0].pool_id,
+        event_type: 'subscription.price_updated',
+        amount: data.amount,
+        metadata: {
+          subscription_id: data.subscription_id,
+          ...data.metadata
+        }
+      }, client);
+  
+      await client.query('COMMIT');
+      return result[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  static async getPayoutById(payoutId) {
+    return await this.executeQuery(`
+      SELECT * FROM payment_system.payouts 
+      WHERE payout_id = $1
+    `, [payoutId]);
+  }
+
+
+  static async logPayoutWithTransaction(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // Double-check payout doesn't exist (race condition protection)
+      const existing = await this.executeQuery(`
+        SELECT 1 FROM payment_system.payouts 
+        WHERE payout_id = $1 AND pool_id = $2
+      `, [data.payout_id, data.pool_id], client);
+  
+      if (existing.length > 0) {
+        await client.query('ROLLBACK');
+        console.log(`Payout ${data.payout_id} for pool ${data.pool_id} already exists`);
+        return;
+      }
+  
+      // Insert payout record
+      await this.executeQuery(`
+        INSERT INTO payment_system.payouts
+        (payout_id, pool_id, amount, currency, bank_arrival_date, bank_account, status, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        data.payout_id,
+        data.pool_id,
+        data.amount,
+        data.currency,
+        data.bank_arrival_date,
+        data.bank_account,
+        data.status,
+        data.metadata
+      ], client);
+  
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

@@ -106,6 +106,12 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pools/:poolId/subscriptions', stripeController.getSubscriptionsByPoolId);
   app.get('/pools/:poolId/balance', stripeController.getPoolBalance);
   app.post('/pools/:poolId/cancel', stripeController.cancelSubscription);
+
+  app.post('/pools/subscriptions/:poolId/update-session', stripeController.createUpdateSession);
+  app.post('/pools/:poolId/update-price', stripeController.updateSubscriptionPrice);
+  app.post('/config', stripeController.setupPortalConfiguration);
+  app.post('/pools/:poolId/test-payout', stripeController.createTestPayout);
+
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
@@ -122,12 +128,3 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
 
-//added the credit card details on the subscription table  -done  
-//create the endpoint to get the subscription details by pool id -done
-//test when there is a new payment on existing subscription -done
-//create endpoints to get pool balance -done 
-//create endpoint to cancel subscription -done        
-//create endpoint to change subscription plan or cahnge the mode of payment 
-//webhook for stripe payout to the bank and database changes to register it -done need to be tested
-//automate the failure count cancel subscription option talk to -stan
-//write test using the timer to check if the subscription is active
