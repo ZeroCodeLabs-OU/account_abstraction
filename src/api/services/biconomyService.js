@@ -11,7 +11,7 @@ function getSigner(encrypted_wallet) {
   const decrypted_wallet = JSON.parse(decrypted_wallet_string);
 
   // Connect to JsonRpcProvider
-  const infuraUrl = process.env.INFURA_PROJECT_URL || 'https://polygon-amoy.infura.io/v3/2IqgllOdDttzJ2c3mcp753wu0kW';
+  const infuraUrl = process.env.INFURA_PROJECT_URL;
   const provider = new ethers.JsonRpcProvider(infuraUrl);
 
   // Create new Wallet object from decrypted private key
@@ -56,5 +56,4 @@ function getSigner_network(encrypted_wallet, network) {
   return { signer, config };
 }
 export { getSigner ,getSigner_network};
-
 
