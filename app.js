@@ -102,15 +102,18 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   
   
   //stripe
-  app.post('/create-checkout', stripeController.createCheckoutSession);
-  app.get('/pools/:poolId/subscriptions', stripeController.getSubscriptionsByPoolId);
-  app.get('/pools/:poolId/balance', stripeController.getPoolBalance);
-  app.post('/pools/:poolId/cancel', stripeController.cancelSubscription);
+  app.post('/create-checkout',authenticateToken, stripeController.createCheckoutSession);
+  app.get('/pools/:poolId/subscriptions',authenticateToken, stripeController.getSubscriptionsByPoolId);
+  app.get('/pools/:poolId/balance',authenticateToken, stripeController.getPoolBalance);
+  app.post('/pools/:poolId/cancel',authenticateToken, stripeController.cancelSubscription);
 
-  app.post('/pools/subscriptions/:poolId/update-session', stripeController.createUpdateSession);
-  app.post('/pools/:poolId/update-price', stripeController.updateSubscriptionPrice);
-  app.post('/config', stripeController.setupPortalConfiguration);
-  app.post('/pools/:poolId/test-payout', stripeController.createTestPayout);
+  app.post('/pools/subscriptions/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
+  app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);
+  // config endpoint used for .env setup for stripe
+  app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
+  app.post('/pools/:poolId/test-payout',authenticateToken, stripeController.createTestPayout);
+  app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
+
 
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
@@ -121,6 +124,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
 
 
 

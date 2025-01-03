@@ -35,7 +35,20 @@ export const stripeController = {
       res.status(500).json({ error: error.message });
     }
   },
-
+  async createProductId (req, res) {
+    try {
+      const product = await stripe.products.create({
+        name: 'Subscription Product Test',
+        description: 'Dynamic subscription product'
+      });
+  
+      console.log('Created Product ID:', product.id); // Save this ID
+      res.json({ productId: product.id });
+    } catch (error) {
+      console.error('Error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
   // Handle Stripe webhooks
   async handleWebhook(req, res) {
     let event;
@@ -91,7 +104,7 @@ export const stripeController = {
     }
   },
 
-  async  setupPortalConfiguration() {
+  async  setupPortalConfiguration(req, res) {
     try {
       const configuration = await stripe.billingPortal.configurations.create({
         business_profile: {
@@ -113,7 +126,8 @@ export const stripeController = {
       });
   
       console.log('Created portal configuration:', configuration.id);
-      return configuration.id;
+      res.json({ configuration_id: configuration.id });
+
     } catch (error) {
       console.error('Error creating portal configuration:', error);
       throw error;
@@ -712,6 +726,7 @@ async function handleSubscriptionCreated(subscription) {
       next_payment_date: currentPeriodEnd,
       pool_id: pool_id
     });
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     return result;
   } catch (error) {
