@@ -662,7 +662,6 @@ async function handleSubscriptionUpdated(subscription) {
 
 async function handleSubscriptionCreated(subscription) {
   try {
-    console.log('Processing subscription creation:', subscription);
     
     // Get pool_id from metadata
     const pool_id = subscription.metadata.pool_id || 
