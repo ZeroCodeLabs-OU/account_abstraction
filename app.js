@@ -105,7 +105,11 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/create-checkout',authenticateToken, stripeController.createCheckoutSession);
   app.get('/pools/:poolId/subscriptions',authenticateToken, stripeController.getSubscriptionsByPoolId);
   app.get('/pools/:poolId/balance',authenticateToken, stripeController.getPoolBalance);
+  app.get('/pools/:poolId/invoices', stripeController.getInvoiceTransactions);
+
   app.post('/pools/:poolId/cancel',authenticateToken, stripeController.cancelSubscription);
+  app.post('/pools/:poolId/pause',authenticateToken, stripeController.PauseSubscription);
+  app.post('/pools/:poolId/resume',authenticateToken, stripeController.ResumeSubscription);
 
   app.post('/pools/subscriptions/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
   app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);

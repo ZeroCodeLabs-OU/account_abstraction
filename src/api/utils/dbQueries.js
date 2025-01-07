@@ -241,7 +241,7 @@ export class PoolQueries {
         });
       }
 
-      // Log the payment
+      // Log the payment with currency in metadata
       await this.logPayment({
         pool_id: sub.pool_id,
         subscription_id: sub.subscription_id,
@@ -251,7 +251,8 @@ export class PoolQueries {
         metadata: {
           ...data.metadata,
           payment_intent: data.metadata.payment_intent,
-          payment_amount: paymentAmount
+          payment_amount: paymentAmount,
+          currency: sub.currency 
         }
       }, client);
 
@@ -264,6 +265,7 @@ export class PoolQueries {
       client.release();
     }
 }
+
   // Payment schedule tracking
   static async trackPaymentSchedule(subscriptionId, client) {
     try {
@@ -380,6 +382,131 @@ export class PoolQueries {
       client.release();
     }
   }
+
+  static async getInvoiceTransactions(poolId) {
+    const query = `
+      WITH distinct_currencies AS (
+        SELECT DISTINCT 
+          jsonb_extract_path_text(pl.metadata, 'currency') as currency
+        FROM payment_system.payment_logs pl
+        WHERE pl.pool_id = $1
+        AND pl.event_type IN ('invoice.paid', 'payment.failed')
+        AND pl.metadata->>'currency' IS NOT NULL
+      )
+      SELECT 
+        pl.*,
+        s.subscription_id,
+        s.interval,
+        s.amount as subscription_amount,
+        ARRAY(SELECT currency FROM distinct_currencies) as available_currencies
+      FROM payment_system.payment_logs pl
+      JOIN payment_system.stripe_subscriptions s ON s.pool_id = pl.pool_id
+      WHERE pl.pool_id = $1
+      AND pl.event_type IN ('invoice.paid', 'payment.failed')
+      ORDER BY pl.created_at DESC;
+    `;
+   
+    try {
+      return await this.executeQuery(query, [poolId]);
+    } catch (error) {
+      console.error('Error fetching invoice transactions:', error);
+      throw error;
+    }
+}
+
+static async canPauseSubscription(poolId) {
+  const query = `
+    SELECT 
+      status,
+      metadata->>'pause_collection' as pause_collection
+    FROM payment_system.stripe_subscriptions 
+    WHERE pool_id = $1
+    AND status = 'active'
+    AND (metadata->>'pause_collection' IS NULL OR metadata->>'pause_collection' != 'void')
+    LIMIT 1;
+  `;
+
+  try {
+    const result = await this.executeQuery(query, [poolId]);
+    return {
+      canPause: result.length > 0,
+      reason: result.length === 0 ? 'Subscription cannot be paused (either inactive or already paused)' : null
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+static async canResumeSubscription(poolId) {
+  const query = `
+    SELECT status
+    FROM payment_system.stripe_subscriptions 
+    WHERE pool_id = $1
+    AND status = 'paused'
+    AND metadata->>'pause_collection' = 'void'
+    LIMIT 1;
+  `;
+
+  try {
+    const result = await this.executeQuery(query, [poolId]);
+    return {
+      canResume: result.length > 0,
+      reason: result.length === 0 ? 'Subscription is not paused' : null
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+   
+   static async updateSubscriptionPauseStatus(subscription_id, isPaused) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.stripe_subscriptions
+        SET 
+          status = $2,
+          metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{pause_collection}',
+            $3::jsonb
+          ),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE subscription_id = $1
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [
+        subscription_id,
+        isPaused ? 'paused' : 'active',
+        JSON.stringify(isPaused ? 'void' : null)
+      ], client);
+  
+      // Log the status change
+      if (result[0]) {
+        await this.logPayment({
+          pool_id: result[0].pool_id,
+          event_type: isPaused ? 'subscription.paused' : 'subscription.resumed',
+          amount: result[0].amount,
+          status: isPaused ? 'paused' : 'active',
+          metadata: {
+            subscription_id,
+            pause_collection: isPaused ? 'void' : null,
+            status_changed_at: new Date().toISOString()
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+   
   static async getSubscriptionsByPoolId(poolId) {
     const query = `
       SELECT 
@@ -593,4 +720,23 @@ export class PoolQueries {
       client.release();
     }
   }
+
+  static async hasActiveSubscription(poolId) {
+    try {
+      const result = await this.executeQuery(`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM payment_system.stripe_subscriptions 
+          WHERE pool_id = $1 
+          AND (status = 'active' OR status = 'incomplete')
+        ) as has_subscription;
+      `, [poolId]);
+  
+      return result[0].has_subscription;
+    } catch (error) {
+      console.error('Error checking active subscription:', error);
+      throw error;
+    }
+  }
+  
 }
