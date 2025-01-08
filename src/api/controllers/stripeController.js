@@ -954,7 +954,6 @@ export const stripeController = {
         }));
       }, 'getSubscriptionsByPoolId');
       const poolData = await PoolQueries.getPoolBalance(poolId);
-      console.log(subscriptions)
       res.json({
         pool_id: poolData.pool_id,
         current_balance: poolData.current_balance,
