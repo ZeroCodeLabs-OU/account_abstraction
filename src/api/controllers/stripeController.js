@@ -961,6 +961,7 @@ export const stripeController = {
           subscriptions:[]
         })
       }
+      else{
 
       const subscriptions = await retryOperation(async () => {
         const subs = await PoolQueries.getSubscriptionsByPoolId(poolId);
@@ -992,6 +993,7 @@ export const stripeController = {
         currency: poolData.currency,
         subscriptions: subscriptions,
       });
+    }
     } catch (error) {
       console.error('Error in getSubscriptionsByPoolId:', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -1037,9 +1039,10 @@ export const stripeController = {
         res.json({
           pool_id: poolId,
           currency: null,
-          current_balance: 0.00
+          current_balance: 0.00,
         })
       }
+      else{
       const pool = await retryOperation(async () => {
         const poolData = await PoolQueries.getPoolBalance(poolId);
         
@@ -1053,6 +1056,7 @@ export const stripeController = {
         currency: pool.currency,
         last_updated: pool.updated_at
       });
+    }
     } catch (error) {
       console.error('Error in getPoolBalance:', error);
       if (error.message === 'Pool not found') {
