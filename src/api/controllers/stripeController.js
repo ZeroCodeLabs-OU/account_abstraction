@@ -952,6 +952,15 @@ export const stripeController = {
       if (!poolId) {
         return res.status(400).json({ error: 'Pool ID is required' });
       }
+      const pool_check = await PoolQueries.getPoolBalance(poolId);
+      if (!pool_check) {
+        res.json({
+          pool_id: poolId,
+          currency: null,
+          current_balance: 0.00,
+          subscriptions:[]
+        })
+      }
 
       const subscriptions = await retryOperation(async () => {
         const subs = await PoolQueries.getSubscriptionsByPoolId(poolId);
@@ -1023,12 +1032,18 @@ export const stripeController = {
       if (!poolId) {
         return res.status(400).json({ error: 'Pool ID is required' });
       }
-
+      const pool_check = await PoolQueries.getPoolBalance(poolId);
+      if (!pool_check) {
+        res.json({
+          pool_id: poolId,
+          currency: null,
+          current_balance: 0.00
+        })
+      }
       const pool = await retryOperation(async () => {
         const poolData = await PoolQueries.getPoolBalance(poolId);
-        if (!poolData) {
-          throw new Error('Pool not found');
-        }
+        
+        
         return poolData;
       }, 'getPoolBalance');
 
