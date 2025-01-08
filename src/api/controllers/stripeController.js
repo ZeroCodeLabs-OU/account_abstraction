@@ -616,7 +616,7 @@ export const stripeController = {
       const configuration = await retryOperation(async () => {
         return await stripe.billingPortal.configurations.create({
           business_profile: {
-            headline: 'Zero-Code Labs',
+            headline: 'Vitaminer Cashback Pool',
           },
           features: {
             subscription_cancel: {
