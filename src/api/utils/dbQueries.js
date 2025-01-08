@@ -59,116 +59,113 @@ export class PoolQueries {
   static async createOrUpdateSubscription(data) {
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-  
-      const query = `
-        INSERT INTO payment_system.stripe_subscriptions 
-        (subscription_id, pool_id, customer_id, amount, currency, interval, 
-         status, next_payment_date, metadata, failure_count,
-         payment_method_id, card_last4, card_brand, card_exp_month, card_exp_year, card_country)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 
-          CURRENT_TIMESTAMP + (CASE 
-            WHEN $6 = 'week' THEN INTERVAL '7 days'
-            ELSE INTERVAL '1 month'
-          END),
-          $8, 0, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT (subscription_id) 
-        DO UPDATE SET
-          status = EXCLUDED.status,
-          next_payment_date = EXCLUDED.next_payment_date,
-          metadata = COALESCE(payment_system.stripe_subscriptions.metadata, '{}'::jsonb) || EXCLUDED.metadata,
-          payment_method_id = COALESCE(EXCLUDED.payment_method_id, payment_system.stripe_subscriptions.payment_method_id),
-          card_last4 = COALESCE(EXCLUDED.card_last4, payment_system.stripe_subscriptions.card_last4),
-          card_brand = COALESCE(EXCLUDED.card_brand, payment_system.stripe_subscriptions.card_brand),
-          card_exp_month = COALESCE(EXCLUDED.card_exp_month, payment_system.stripe_subscriptions.card_exp_month),
-          card_exp_year = COALESCE(EXCLUDED.card_exp_year, payment_system.stripe_subscriptions.card_exp_year),
-          card_country = COALESCE(EXCLUDED.card_country, payment_system.stripe_subscriptions.card_country),
-          updated_at = CURRENT_TIMESTAMP
-        RETURNING *;
-      `;
-  
-      const values = [
-        data.subscription_id,
-        data.pool_id,
-        data.customer_id,
-        data.amount,
-        data.currency,
-        data.interval,
-        data.status,
-        data.metadata || {},
-        data.payment_method_id || null,
-        data.card_last4 || null,
-        data.card_brand || null,
-        data.card_exp_month || null,
-        data.card_exp_year || null,
-        data.card_country || null
-      ];
-  
-      const result = await this.executeQuery(query, values, client);
-      await client.query('COMMIT');
-      return result[0];
+        await client.query('BEGIN');
+
+        const query = `
+            INSERT INTO payment_system.stripe_subscriptions 
+            (subscription_id, pool_id, customer_id, amount, currency, interval, 
+             status, next_payment_date, metadata, failure_count,
+             payment_method_id, card_last4, card_brand, card_exp_month, card_exp_year, card_country)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 
+              $8, 
+              $9, 0, $10, $11, $12, $13, $14, $15)
+            ON CONFLICT (subscription_id) 
+            DO UPDATE SET
+              status = EXCLUDED.status,
+              next_payment_date = EXCLUDED.next_payment_date,
+              metadata = COALESCE(payment_system.stripe_subscriptions.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+              payment_method_id = COALESCE(EXCLUDED.payment_method_id, payment_system.stripe_subscriptions.payment_method_id),
+              card_last4 = COALESCE(EXCLUDED.card_last4, payment_system.stripe_subscriptions.card_last4),
+              card_brand = COALESCE(EXCLUDED.card_brand, payment_system.stripe_subscriptions.card_brand),
+              card_exp_month = COALESCE(EXCLUDED.card_exp_month, payment_system.stripe_subscriptions.card_exp_month),
+              card_exp_year = COALESCE(EXCLUDED.card_exp_year, payment_system.stripe_subscriptions.card_exp_year),
+              card_country = COALESCE(EXCLUDED.card_country, payment_system.stripe_subscriptions.card_country),
+              updated_at = CURRENT_TIMESTAMP
+            RETURNING *;
+        `;
+
+        const values = [
+            data.subscription_id,
+            data.pool_id,
+            data.customer_id,
+            data.amount,
+            data.currency,
+            data.interval,
+            data.status,
+            data.next_payment_date, 
+            data.metadata || {},
+            data.payment_method_id || null,
+            data.card_last4 || null,
+            data.card_brand || null,
+            data.card_exp_month || null,
+            data.card_exp_year || null,
+            data.card_country || null
+        ];
+
+        const result = await this.executeQuery(query, values, client);
+        await client.query('COMMIT');
+        return result[0];
     } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
+        await client.query('ROLLBACK');
+        throw error;
     } finally {
-      client.release();
+        client.release();
     }
-  }
- static async createSubscription(data) {
-    const client = await pool.connect();
-    try {
+}
+
+static async createSubscription(data) {
+  const client = await pool.connect();
+  try {
       await client.query('BEGIN');
 
       // Create subscription
       const subscription = await this.executeQuery(`
-        INSERT INTO payment_system.stripe_subscriptions 
-        (subscription_id, pool_id, customer_id, amount, currency, interval, 
-         status, next_payment_date, metadata, failure_count)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 
-          CURRENT_TIMESTAMP + (CASE 
-            WHEN $6 = 'week' THEN INTERVAL '7 days'
-            ELSE INTERVAL '1 month'
-          END),
-          $8, 0)
-        RETURNING *;
+          INSERT INTO payment_system.stripe_subscriptions 
+          (subscription_id, pool_id, customer_id, amount, currency, interval, 
+           status, next_payment_date, metadata, failure_count)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 
+            $8, -- Use provided next_payment_date
+            $9, 0)
+          RETURNING *;
       `, [
-        data.subscription_id,
-        data.pool_id,
-        data.customer_id,
-        data.amount,
-        data.currency,
-        data.interval,
-        data.status,
-        data.metadata || {}
+          data.subscription_id,
+          data.pool_id,
+          data.customer_id,
+          data.amount,
+          data.currency,
+          data.interval,
+          data.status,
+          data.next_payment_date, // Use next_payment_date from the input
+          data.metadata || {}
       ], client);
 
       // Create payment schedule
       await this.executeQuery(`
-        INSERT INTO payment_system.payment_schedule 
-        (subscription_id, scheduled_date, amount, status)
-        SELECT 
-          $1,
-          generate_series(
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP + INTERVAL '1 year',
-            CASE 
-              WHEN $2 = 'week' THEN INTERVAL '7 days'
-              ELSE INTERVAL '1 month'
-            END
-          ),
-          $3,
-          'scheduled'
-      `, [data.subscription_id, data.interval, data.amount / 100], client);
+          INSERT INTO payment_system.payment_schedule 
+          (subscription_id, scheduled_date, amount, status)
+          SELECT 
+            $1,
+            generate_series(
+              $2, -- Start from provided next_payment_date
+              $2 + INTERVAL '1 year',
+              CASE 
+                WHEN $3 = 'week' THEN INTERVAL '7 days'
+                ELSE INTERVAL '1 month'
+              END
+            ),
+            $4,
+            'scheduled'
+      `, [data.subscription_id, data.next_payment_date, data.interval, data.amount / 100], client);
 
       await client.query('COMMIT');
       return subscription[0];
-    } catch (error) {
+  } catch (error) {
       await client.query('ROLLBACK');
       throw error;
-    } finally {
+  } finally {
       client.release();
-    }
   }
+}
   // Process payments and update balances
   static async processPayment(data) {
     const client = await pool.connect();
@@ -241,7 +238,7 @@ export class PoolQueries {
         });
       }
 
-      // Log the payment
+      // Log the payment with currency in metadata
       await this.logPayment({
         pool_id: sub.pool_id,
         subscription_id: sub.subscription_id,
@@ -251,7 +248,8 @@ export class PoolQueries {
         metadata: {
           ...data.metadata,
           payment_intent: data.metadata.payment_intent,
-          payment_amount: paymentAmount
+          payment_amount: paymentAmount,
+          currency: sub.currency 
         }
       }, client);
 
@@ -264,6 +262,7 @@ export class PoolQueries {
       client.release();
     }
 }
+
   // Payment schedule tracking
   static async trackPaymentSchedule(subscriptionId, client) {
     try {
@@ -380,6 +379,131 @@ export class PoolQueries {
       client.release();
     }
   }
+
+  static async getInvoiceTransactions(poolId) {
+    const query = `
+      WITH distinct_currencies AS (
+        SELECT DISTINCT 
+          jsonb_extract_path_text(pl.metadata, 'currency') as currency
+        FROM payment_system.payment_logs pl
+        WHERE pl.pool_id = $1
+        AND pl.event_type IN ('invoice.paid', 'payment.failed')
+        AND pl.metadata->>'currency' IS NOT NULL
+      )
+      SELECT 
+        pl.*,
+        s.subscription_id,
+        s.interval,
+        s.amount as subscription_amount,
+        ARRAY(SELECT currency FROM distinct_currencies) as available_currencies
+      FROM payment_system.payment_logs pl
+      JOIN payment_system.stripe_subscriptions s ON s.pool_id = pl.pool_id
+      WHERE pl.pool_id = $1
+      AND pl.event_type IN ('invoice.paid', 'payment.failed')
+      ORDER BY pl.created_at DESC;
+    `;
+   
+    try {
+      return await this.executeQuery(query, [poolId]);
+    } catch (error) {
+      console.error('Error fetching invoice transactions:', error);
+      throw error;
+    }
+}
+
+static async canPauseSubscription(poolId) {
+  const query = `
+    SELECT 
+      status,
+      metadata->>'pause_collection' as pause_collection
+    FROM payment_system.stripe_subscriptions 
+    WHERE pool_id = $1
+    AND status = 'active'
+    AND (metadata->>'pause_collection' IS NULL OR metadata->>'pause_collection' != 'void')
+    LIMIT 1;
+  `;
+
+  try {
+    const result = await this.executeQuery(query, [poolId]);
+    return {
+      canPause: result.length > 0,
+      reason: result.length === 0 ? 'Subscription cannot be paused (either inactive or already paused)' : null
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+static async canResumeSubscription(poolId) {
+  const query = `
+    SELECT status
+    FROM payment_system.stripe_subscriptions 
+    WHERE pool_id = $1
+    AND status = 'paused'
+    AND metadata->>'pause_collection' = 'void'
+    LIMIT 1;
+  `;
+
+  try {
+    const result = await this.executeQuery(query, [poolId]);
+    return {
+      canResume: result.length > 0,
+      reason: result.length === 0 ? 'Subscription is not paused' : null
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+   
+   static async updateSubscriptionPauseStatus(subscription_id, isPaused) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.stripe_subscriptions
+        SET 
+          status = $2,
+          metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{pause_collection}',
+            $3::jsonb
+          ),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE subscription_id = $1
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [
+        subscription_id,
+        isPaused ? 'paused' : 'active',
+        JSON.stringify(isPaused ? 'void' : null)
+      ], client);
+  
+      // Log the status change
+      if (result[0]) {
+        await this.logPayment({
+          pool_id: result[0].pool_id,
+          event_type: isPaused ? 'subscription.paused' : 'subscription.resumed',
+          amount: result[0].amount,
+          status: isPaused ? 'paused' : 'active',
+          metadata: {
+            subscription_id,
+            pause_collection: isPaused ? 'void' : null,
+            status_changed_at: new Date().toISOString()
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+   
   static async getSubscriptionsByPoolId(poolId) {
     const query = `
       SELECT 
@@ -593,4 +717,23 @@ export class PoolQueries {
       client.release();
     }
   }
+
+  static async hasActiveSubscription(poolId) {
+    try {
+      const result = await this.executeQuery(`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM payment_system.stripe_subscriptions 
+          WHERE pool_id = $1 
+          AND (status = 'active' OR status = 'incomplete')
+        ) as has_subscription;
+      `, [poolId]);
+  
+      return result[0].has_subscription;
+    } catch (error) {
+      console.error('Error checking active subscription:', error);
+      throw error;
+    }
+  }
+  
 }
