@@ -952,6 +952,16 @@ export const stripeController = {
       if (!poolId) {
         return res.status(400).json({ error: 'Pool ID is required' });
       }
+      const pool_check = await PoolQueries.getPoolBalance(poolId);
+      if (!pool_check) {
+        res.json({
+          pool_id: poolId,
+          currency: null,
+          current_balance: 0.00,
+          subscriptions:[]
+        })
+      }
+      else{
 
       const subscriptions = await retryOperation(async () => {
         const subs = await PoolQueries.getSubscriptionsByPoolId(poolId);
@@ -983,6 +993,7 @@ export const stripeController = {
         currency: poolData.currency,
         subscriptions: subscriptions,
       });
+    }
     } catch (error) {
       console.error('Error in getSubscriptionsByPoolId:', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -1023,12 +1034,19 @@ export const stripeController = {
       if (!poolId) {
         return res.status(400).json({ error: 'Pool ID is required' });
       }
-
+      const pool_check = await PoolQueries.getPoolBalance(poolId);
+      if (!pool_check) {
+        res.json({
+          pool_id: poolId,
+          currency: null,
+          current_balance: 0.00,
+        })
+      }
+      else{
       const pool = await retryOperation(async () => {
         const poolData = await PoolQueries.getPoolBalance(poolId);
-        if (!poolData) {
-          throw new Error('Pool not found');
-        }
+        
+        
         return poolData;
       }, 'getPoolBalance');
 
@@ -1038,6 +1056,7 @@ export const stripeController = {
         currency: pool.currency,
         last_updated: pool.updated_at
       });
+    }
     } catch (error) {
       console.error('Error in getPoolBalance:', error);
       if (error.message === 'Pool not found') {
