@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { PoolQueries } from '../utils/dbQueries.js';
+import e from 'express';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -655,7 +656,7 @@ export const stripeController = {
         const customer_id = subscriptions[0].customer_id;
         const session = await stripe.billingPortal.sessions.create({
           customer: customer_id,
-          return_url: `${process.env.FRONTEND_URL}/account`,
+          return_url: `${process.env.FRONTEND_URL}/cancel`,
           configuration: process.env.STRIPE_PORTAL_CONFIG_ID
         });
 
@@ -862,7 +863,9 @@ export const stripeController = {
         
         // Update Stripe subscription
         const pausedSubscription = await stripe.subscriptions.update(subscription_id, {
-          pause_collection: { behavior: 'void' }
+          pause_collection: { behavior: 'void' },
+          proration_behavior: 'none' // Prevents proration
+
         });
    
         // Update local database
@@ -897,16 +900,36 @@ export const stripeController = {
         if (!subscriptions?.length) {
           throw new Error('No subscription found for this pool');
         }
-   
+        let resumedSubscription;
         const subscription_id = subscriptions[0].subscription_id;
+        if (subscriptions.length > 0 && subscriptions[0].next_payment_date) {
+          const nextPaymentDate = new Date(subscriptions[0].next_payment_date);
+          const currentDate = new Date();
+          console.log('Next Payment Date:', nextPaymentDate);
+          console.log('Current Date:', currentDate);
+          if (nextPaymentDate < currentDate) {
+            resumedSubscription = await stripe.subscriptions.update(subscription_id, {
+              pause_collection: null,
+              proration_behavior: 'none',
+              billing_cycle_anchor: 'unchanged'
+            });
+            console.log('Resumed unchanged');
+          } else {
+            resumedSubscription = await stripe.subscriptions.update(subscription_id, {
+              pause_collection: null,
+              proration_behavior: 'none',
+              billing_cycle_anchor: 'unchanged'
+            });
+            console.log('Resumed with unchanged');
+          }
+        } else {
+          throw new Error("No valid subscription data available.");
+        }
+     
         
+
         // Update Stripe subscription
-        const resumedSubscription = await stripe.subscriptions.update(subscription_id, {
-          pause_collection: null,
-          proration_behavior: 'none',
-          billing_cycle_anchor: 'now'
-        });
-   
+
         // Update local database
         await PoolQueries.updateSubscriptionPauseStatus(subscription_id, false);
    
