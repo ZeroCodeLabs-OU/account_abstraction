@@ -207,6 +207,7 @@ async function handleCheckoutCompleted(session) {
   logWebhookProgress('checkout.session.completed', 'completed', { session_id: sessionId });
 }
 
+
 async function handleInvoicePaid(invoice) {
   const sessionId = invoice.subscription;
   logWebhookProgress('invoice.paid', 'started', { invoice_id: invoice.id });
@@ -500,6 +501,83 @@ async function handlePayoutPaid(payout) {
   }, 'handlePayoutPaid');
 }
 
+async function handleCustomerUpdated(customer) {
+  logWebhookProgress('customer.updated', 'started', { customer_id: customer.id });
+
+  await retryOperation(async () => {
+    // Retrieve full customer object with default payment method
+    const customerWithPaymentMethod = await stripe.customers.retrieve(customer.id, {
+      expand: ['invoice_settings.default_payment_method']
+    });
+
+    const defaultPaymentMethod = customerWithPaymentMethod.invoice_settings.default_payment_method;
+    
+    if (!defaultPaymentMethod || defaultPaymentMethod.type !== 'card') {
+      console.log('No valid default payment method found for customer:', customer.id);
+      return;
+    }
+
+    console.log('Processing customer update with payment method:', {
+      customer_id: customer.id,
+      payment_method_id: defaultPaymentMethod.id,
+      card_last4: defaultPaymentMethod.card.last4
+    });
+
+    // Get all subscriptions for this customer
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customer.id,
+      expand: ['data.default_payment_method'],
+      limit: 100
+    });
+
+    for (const subscription of subscriptions.data) {
+      const pool_id = subscription.metadata?.pool_id;
+      if (!pool_id) {
+        console.log(`No pool_id found for subscription ${subscription.id}`);
+        continue;
+      }
+
+      // Get previous payment method details
+      const previousPaymentMethod = subscription.default_payment_method;
+
+      // Update subscription's default payment method if different
+      if (subscription.default_payment_method?.id !== defaultPaymentMethod.id) {
+        await stripe.subscriptions.update(subscription.id, {
+          default_payment_method: defaultPaymentMethod.id
+        });
+      }
+
+      // Update in database
+      await PoolQueries.updateSubscriptionPaymentMethod({
+        subscription_id: subscription.id,
+        payment_method_id: defaultPaymentMethod.id,
+        card_last4: defaultPaymentMethod.card.last4,
+        card_brand: defaultPaymentMethod.card.brand,
+        card_exp_month: defaultPaymentMethod.card.exp_month,
+        card_exp_year: defaultPaymentMethod.card.exp_year,
+        card_country: defaultPaymentMethod.card.country,
+        previous_payment_method: previousPaymentMethod ? {
+          id: previousPaymentMethod.id,
+          last4: previousPaymentMethod.card?.last4,
+          brand: previousPaymentMethod.card?.brand
+        } : null
+      });
+
+      logWebhookProgress('customer.updated', 'updated_subscription', {
+        customer_id: customer.id,
+        subscription_id: subscription.id,
+        pool_id: pool_id,
+        new_card_last4: defaultPaymentMethod.card.last4,
+        payment_method_id: defaultPaymentMethod.id
+      });
+    }
+  }, 'handleCustomerUpdated');
+
+  logWebhookProgress('customer.updated', 'completed', { 
+    customer_id: customer.id 
+  });
+}
+
 export const stripeController = {
   // Handle checkout session creation
   async createCheckoutSession(req, res) {
@@ -599,6 +677,9 @@ export const stripeController = {
         case 'payout.paid':
           await handlePayoutPaid(event.data.object);
           break;
+        case 'customer.updated':
+          await handleCustomerUpdated(event.data.object);
+          break;
       }
 
       res.json({ received: true });
@@ -673,66 +754,87 @@ export const stripeController = {
   async createTestPayout(req, res) {
     try {
       const { poolId } = req.params;
+      
+      // 1. Create a test customer
+      const customer = await stripe.customers.create({
+        email: 'test@example.com',
+        source: 'tok_visa'
+      });
   
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions.length) {
-          throw new Error('No subscription found for this pool');
+      // 2. Create a product
+      const product = await stripe.products.create({
+        name: 'Test Pool Subscription'
+      });
+  
+      // 3. Create a price/plan with pool metadata
+      const price = await stripe.prices.create({
+        unit_amount: 25000, // $250.00
+        currency: 'usd',
+        recurring: {
+          interval: 'month'
+        },
+        product: product.id,
+        metadata: {
+          pool_id: poolId
         }
+      });
   
-        const subscription = subscriptions[0];
-        const amountInSmallestUnit = Math.round(subscription.amount);
+      // 4. Create a subscription
+      const subscription = await stripe.subscriptions.create({
+        customer: customer.id,
+        items: [{
+          price: price.id,
+        }],
+        metadata: {
+          pool_id: poolId
+        }
+      });
   
-        // Check balance before proceeding
-        const balance = await stripe.balance.retrieve();
-        console.log('Current balance:', balance);
-        
+      // 5. Create an invoice
+      const invoice = await stripe.invoices.create({
+        customer: customer.id,
+        subscription: subscription.id,
+        metadata: {
+          pool_id: poolId
+        }
+      });
   
-        // Create Payment Intent
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: amountInSmallestUnit,
-          currency: 'inr',
-          customer: subscription.customer_id,
-          payment_method: subscription.payment_method_id,
-          off_session: true,
-          confirm: true,
-          metadata: {
-            subscription_id: subscription.subscription_id,
-            pool_id: poolId
-          }
-        });
+      // 6. Pay the invoice
+      await stripe.invoices.pay(invoice.id);
   
-        // Create Payout
-        const payout = await stripe.payouts.create({
-          amount: amountInSmallestUnit,
-          currency: 'eur',
-          metadata: {
-            test_payment_intent_id: paymentIntent.id,
-            pool_id: poolId,
-            is_test: true
-          }
-        });
-        console.log('Attempting payout with balance:', balance);
-        console.log('Requested payout:', { amount: 10000, currency: 'inr' });
-
-        return {
-          payment_intent_id: paymentIntent.id,
-          payout_id: payout.id,
-          amount: amountInSmallestUnit / 100,
-          currency: subscription.currency
-        };
-      }, 'createTestPayout');
+      // 7. Create payout
+      const payout = await stripe.payouts.create({
+        amount: 25000,
+        currency: 'usd',
+        metadata: {
+          pool_id: poolId
+        }
+      });
   
       res.json({
-        message: 'Test payout created',
-        data: result
+        message: 'Production-like test created',
+        data: {
+          customer_id: customer.id,
+          product_id: product.id,
+          price_id: price.id,
+          subscription_id: subscription.id,
+          invoice_id: invoice.id,
+          payout_id: payout.id,
+          amount: 25000 / 100,
+          pool_id: poolId
+        }
       });
+  
     } catch (error) {
-      console.error('Error creating test payout:', error);
-      res.status(500).json({ error: error.message });
+      console.error('Error creating production test:', error);
+      res.status(500).json({ 
+        error: error.message,
+        type: error.type,
+        code: error.code 
+      });
     }
   },
-
+  
   async updateSubscriptionPrice(req, res) {
     try {
       const { poolId } = req.params;
@@ -891,7 +993,7 @@ export const stripeController = {
       res.status(500).json({ error: error.message });
     }
    },
-  
+   
    async ResumeSubscription(req, res) {
     try {
       const { poolId } = req.params;
@@ -1084,7 +1186,7 @@ export const handlers = {
   handleSubscriptionCreated,
   handleSubscriptionUpdated,
   handleSubscriptionCanceled,
-  handlePayoutPaid
+  handlePayoutPaid,handleCustomerUpdated  
 };
 
 // Export utility functions for testing and reuse

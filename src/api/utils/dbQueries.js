@@ -743,5 +743,70 @@ static async canResumeSubscription(poolId) {
       throw error;
     }
   }
+  static async updateSubscriptionPaymentMethod(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // Update subscription with new payment method
+      const result = await this.executeQuery(`
+        UPDATE payment_system.stripe_subscriptions
+        SET 
+          payment_method_id = $1,
+          card_last4 = $2,
+          card_brand = $3,
+          card_exp_month = $4,
+          card_exp_year = $5,
+          card_country = $6,
+          metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{payment_method_update}',
+            $7::jsonb
+          ),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE subscription_id = $8
+        RETURNING *;
+      `, [
+        data.payment_method_id,
+        data.card_last4,
+        data.card_brand,
+        data.card_exp_month,
+        data.card_exp_year,
+        data.card_country,
+        JSON.stringify({
+          updated_at: new Date().toISOString(),
+          previous_payment_method: data.previous_payment_method,
+          update_type: 'payment_method.updated'
+        }),
+        data.subscription_id
+      ], client);
+  
+      // Log the payment method update
+      if (result[0]) {
+        await this.logPayment({
+          pool_id: result[0].pool_id,
+          event_type: 'payment_method.updated',
+          amount: result[0].amount,
+          status: 'succeeded',
+          metadata: {
+            subscription_id: data.subscription_id,
+            payment_method_id: data.payment_method_id,
+            previous_payment_method: data.previous_payment_method,
+            card_last4: data.card_last4,
+            card_brand: data.card_brand,
+            updated_at: new Date().toISOString()
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   
 }
