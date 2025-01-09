@@ -673,19 +673,25 @@ export const stripeController = {
   async createTestPayout(req, res) {
     try {
       const { poolId } = req.params;
-
+  
       const result = await retryOperation(async () => {
         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
         if (!subscriptions.length) {
           throw new Error('No subscription found for this pool');
         }
-
+  
         const subscription = subscriptions[0];
         const amountInSmallestUnit = Math.round(subscription.amount);
-
+  
+        // Check balance before proceeding
+        const balance = await stripe.balance.retrieve();
+        console.log('Current balance:', balance);
+        
+  
+        // Create Payment Intent
         const paymentIntent = await stripe.paymentIntents.create({
           amount: amountInSmallestUnit,
-          currency: subscription.currency,
+          currency: 'inr',
           customer: subscription.customer_id,
           payment_method: subscription.payment_method_id,
           off_session: true,
@@ -695,16 +701,19 @@ export const stripeController = {
             pool_id: poolId
           }
         });
-
+  
+        // Create Payout
         const payout = await stripe.payouts.create({
           amount: amountInSmallestUnit,
-          currency: subscription.currency,
+          currency: 'eur',
           metadata: {
             test_payment_intent_id: paymentIntent.id,
             pool_id: poolId,
             is_test: true
           }
         });
+        console.log('Attempting payout with balance:', balance);
+        console.log('Requested payout:', { amount: 10000, currency: 'inr' });
 
         return {
           payment_intent_id: paymentIntent.id,
@@ -713,7 +722,7 @@ export const stripeController = {
           currency: subscription.currency
         };
       }, 'createTestPayout');
-
+  
       res.json({
         message: 'Test payout created',
         data: result
@@ -911,9 +920,9 @@ export const stripeController = {
             resumedSubscription = await stripe.subscriptions.update(subscription_id, {
               pause_collection: null,
               proration_behavior: 'none',
-              billing_cycle_anchor: 'unchanged'
+              billing_cycle_anchor: 'now'
             });
-            console.log('Resumed unchanged');
+            console.log('Resumed now');
           } else {
             resumedSubscription = await stripe.subscriptions.update(subscription_id, {
               pause_collection: null,
