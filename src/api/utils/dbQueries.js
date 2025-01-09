@@ -382,25 +382,33 @@ static async createSubscription(data) {
 
   static async getInvoiceTransactions(poolId) {
     const query = `
-      WITH distinct_currencies AS (
-        SELECT DISTINCT 
-          jsonb_extract_path_text(pl.metadata, 'currency') as currency
-        FROM payment_system.payment_logs pl
-        WHERE pl.pool_id = $1
-        AND pl.event_type IN ('invoice.paid', 'payment.failed')
-        AND pl.metadata->>'currency' IS NOT NULL
-      )
-      SELECT 
-        pl.*,
-        s.subscription_id,
-        s.interval,
-        s.amount as subscription_amount,
-        ARRAY(SELECT currency FROM distinct_currencies) as available_currencies
-      FROM payment_system.payment_logs pl
-      JOIN payment_system.stripe_subscriptions s ON s.pool_id = pl.pool_id
-      WHERE pl.pool_id = $1
-      AND pl.event_type IN ('invoice.paid', 'payment.failed')
-      ORDER BY pl.created_at DESC;
+        WITH distinct_currencies AS (
+    SELECT DISTINCT 
+      jsonb_extract_path_text(pl.metadata, 'currency') AS currency
+    FROM payment_system.payment_logs pl
+    WHERE pl.pool_id = $1
+    AND pl.event_type IN ('invoice.paid', 'payment.failed')
+    AND pl.metadata->>'currency' IS NOT NULL
+  ),
+  latest_logs AS (
+    SELECT DISTINCT ON (pl.id)
+      pl.*,
+      s.subscription_id,
+      s.interval,
+      s.amount AS subscription_amount
+    FROM payment_system.payment_logs pl
+    JOIN payment_system.stripe_subscriptions s 
+      ON s.pool_id = pl.pool_id
+    WHERE pl.pool_id = $1
+    AND pl.event_type IN ('invoice.paid', 'payment.failed')
+    ORDER BY pl.id, pl.created_at DESC
+  )
+  SELECT 
+    ll.*,
+    ARRAY(SELECT currency FROM distinct_currencies) AS available_currencies
+  FROM latest_logs ll
+  ORDER BY ll.created_at DESC;
+
     `;
    
     try {
