@@ -207,6 +207,66 @@ async function handleCheckoutCompleted(session) {
   logWebhookProgress('checkout.session.completed', 'completed', { session_id: sessionId });
 }
 
+async function handlePaymentSuccess(paymentIntent) {
+  logWebhookProgress('payment_intent.succeeded', 'started', { payment_id: paymentIntent.id });
+
+  await retryOperation(async () => {
+    console.log('Payment Intent:', paymentIntent);
+
+    // Get the charge from latest_charge
+    const charge = await stripe.charges.retrieve(paymentIntent.latest_charge, {
+      expand: ['balance_transaction']
+    });
+
+    if (!charge || !charge.balance_transaction) {
+      console.log('No balance transaction found for charge:', paymentIntent.latest_charge);
+      return;
+    }
+
+    // Get invoice and subscription from charge
+    if (!charge.invoice) {
+      console.log('No invoice found for charge:', charge.id);
+      return;
+    }
+
+    const invoice = await stripe.invoices.retrieve(charge.invoice);
+    if (!invoice || !invoice.subscription) {
+      console.log('No subscription found in invoice:', charge.invoice);
+      return;
+    }
+
+    // Get subscription details
+    const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+    
+    console.log('Creating transfer for:', {
+      payment_intent: paymentIntent.id,
+      charge_id: charge.id,
+      balance_transaction: charge.balance_transaction.id,
+      subscription_id: subscription.id,
+      pool_id: subscription.metadata.pool_id
+    });
+
+    // Create transfer record
+    await PoolQueries.createTransfer({
+      transaction_id: charge.balance_transaction.id,
+      customer_id: paymentIntent.customer,
+      payment_id: paymentIntent.id,
+      payout_id: null,
+      pool_id: subscription.metadata.pool_id,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      payment_datetime: new Date(paymentIntent.created * 1000),
+      status: 'active'
+    });
+
+    logWebhookProgress('transfer.created', 'completed', {
+      payment_id: paymentIntent.id,
+      transaction_id: charge.balance_transaction.id,
+      amount: paymentIntent.amount / 100,
+      pool_id: subscription.metadata.pool_id
+    });
+  }, 'handlePaymentSuccess');
+}
 
 async function handleInvoicePaid(invoice) {
   const sessionId = invoice.subscription;
@@ -426,80 +486,31 @@ async function handleSubscriptionCanceled(subscription) {
   }, 'handleSubscriptionCanceled');
 }
 
+
+
 async function handlePayoutPaid(payout) {
   logWebhookProgress('payout.paid', 'started', { payout_id: payout.id });
 
   await retryOperation(async () => {
-    const existingPayout = await PoolQueries.getPayoutById(payout.id);
-    if (existingPayout) {
-      logWebhookProgress('payout.paid', 'skipped', { 
-        payout_id: payout.id,
-        reason: 'already processed'
-      });
-      return;
-    }
-
-    const charges = await stripe.charges.list({
-      arrival_payout: payout.id,
-      limit: 100
+    // Get all balance transactions for this payout
+    const balanceTransactions = await stripe.balanceTransactions.list({
+      payout: payout.id
     });
 
-    const poolPayouts = {};
-    for (const charge of charges.data) {
-      if (charge.invoice) {
-        const invoice = await stripe.invoices.retrieve(charge.invoice);
-        if (invoice.subscription) {
-          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-          const pool_id = subscription.plan.metadata?.pool_id;
-          
-          if (pool_id) {
-            poolPayouts[pool_id] = poolPayouts[pool_id] || {
-              amount: 0,
-              payments: []
-            };
-            poolPayouts[pool_id].amount += charge.amount;
-            poolPayouts[pool_id].payments.push({
-              amount: charge.amount,
-              subscription_id: invoice.subscription,
-              charge_id: charge.id,
-              invoice_id: invoice.id
-            });
-          }
-        }
-      }
-    }
-
-    for (const [pool_id, data] of Object.entries(poolPayouts)) {
-      await PoolQueries.logPayoutWithTransaction({
-        payout_id: payout.id,
-        pool_id,
-        amount: data.amount / 100,
-        currency: payout.currency,
-        bank_arrival_date: new Date(payout.arrival_date * 1000),
-        bank_account: payout.destination,
-        status: payout.status,
-        metadata: {
-          payments: data.payments,
-          statement_descriptor: payout.statement_descriptor,
-          method: payout.method,
-          type: payout.type,
-          processed_at: new Date().toISOString()
-        }
-      });
-
-      logWebhookProgress('payout.paid', 'processed_pool', {
-        payout_id: payout.id,
-        pool_id,
-        amount: data.amount / 100
-      });
-    }
-
-    logWebhookProgress('payout.paid', 'completed', { 
+    // Update all transfers with payout information
+    await PoolQueries.updateTransferWithPayout({
       payout_id: payout.id,
-      total_pools: Object.keys(poolPayouts).length
+      settlement_datetime: new Date(payout.arrival_date * 1000),
+      transaction_ids: balanceTransactions.data.map(t => t.id)
+    });
+
+    logWebhookProgress('payout.paid', 'completed', {
+      payout_id: payout.id,
+      transaction_count: balanceTransactions.data.length
     });
   }, 'handlePayoutPaid');
 }
+
 
 async function handleCustomerUpdated(customer) {
   logWebhookProgress('customer.updated', 'started', { customer_id: customer.id });
@@ -531,7 +542,7 @@ async function handleCustomerUpdated(customer) {
     });
 
     for (const subscription of subscriptions.data) {
-      const pool_id = subscription.metadata?.pool_id;
+      const pool_id = subscription.plan.metadata?.pool_id;
       if (!pool_id) {
         console.log(`No pool_id found for subscription ${subscription.id}`);
         continue;
@@ -578,6 +589,58 @@ async function handleCustomerUpdated(customer) {
   });
 }
 
+async function handleTransferCreated(balanceTransaction) {
+  const sessionId = balanceTransaction.id;
+  logWebhookProgress('transfer.created', 'started', { transaction_id: sessionId });
+
+  await retryOperation(async () => {
+    // Check if we have a valid balance transaction
+    if (!balanceTransaction || !balanceTransaction.source) {
+      console.log('Invalid balance transaction:', balanceTransaction);
+      return;
+    }
+
+    // Log the balance transaction details
+    console.log('Balance Transaction:', {
+      id: balanceTransaction.id,
+      source: balanceTransaction.source,
+      type: balanceTransaction.type,
+      amount: balanceTransaction.amount,
+      currency: balanceTransaction.currency
+    });
+
+    // If it's a payment_intent source
+    if (balanceTransaction.source_type === 'payment_intent') {
+      const sourceTransaction = await stripe.paymentIntents.retrieve(
+        balanceTransaction.source
+      );
+
+      // Get subscription from payment intent
+      if (sourceTransaction.subscription) {
+        const subscription = await stripe.subscriptions.retrieve(
+          sourceTransaction.subscription
+        );
+
+        // Create transfer record
+        await PoolQueries.createTransfer({
+          transaction_id: balanceTransaction.id,
+          customer_id: sourceTransaction.customer,
+          payment_id: sourceTransaction.id,
+          pool_id: subscription.plan.metadata.pool_id,
+          amount: balanceTransaction.amount,
+          currency: balanceTransaction.currency,
+          payment_datetime: new Date(balanceTransaction.created * 1000)
+        });
+      }
+    }
+
+    logWebhookProgress('transfer.created', 'completed', {
+      transaction_id: balanceTransaction.id,
+      amount: balanceTransaction.amount,
+      type: balanceTransaction.type
+    });
+  }, 'handleTransferCreated');
+}
 export const stripeController = {
   // Handle checkout session creation
   async createCheckoutSession(req, res) {
@@ -674,11 +737,39 @@ export const stripeController = {
         case 'customer.subscription.deleted':
           await handleSubscriptionCanceled(event.data.object);
           break;
+        case 'customer.updated':
+          await handleCustomerUpdated(event.data.object);
+          break;
+          case 'balance.available': {
+            console.log('Balance Available Event:', event.data.object);
+            const balanceTransaction = event.data.object;
+            
+            logWebhookProgress('balance.available', 'received', { 
+              event_id: event.id,
+              amount: balanceTransaction.amount,
+              currency: balanceTransaction.currency,
+              source: balanceTransaction.source,
+              source_type: balanceTransaction.source_type
+            });
+            
+            await handleTransferCreated(event.data.object);
+            break;
+          }
         case 'payout.paid':
           await handlePayoutPaid(event.data.object);
           break;
-        case 'customer.updated':
-          await handleCustomerUpdated(event.data.object);
+          case 'payment_intent.succeeded':
+            console.log('Payment Intent Full Object:', JSON.stringify(event.data.object, null, 2));
+            await handlePaymentSuccess(event.data.object);
+            break;
+        
+        case 'charge.succeeded':
+          const charge = event.data.object;
+          logWebhookProgress('charge.succeeded', 'received', { 
+              charge_id: charge.id,
+              amount: charge.amount,
+              balance_transaction: charge.balance_transaction
+            });
           break;
       }
 
@@ -751,89 +842,7 @@ export const stripeController = {
     }
   },
 
-  async createTestPayout(req, res) {
-    try {
-      const { poolId } = req.params;
-      
-      // 1. Create a test customer
-      const customer = await stripe.customers.create({
-        email: 'test@example.com',
-        source: 'tok_visa'
-      });
   
-      // 2. Create a product
-      const product = await stripe.products.create({
-        name: 'Test Pool Subscription'
-      });
-  
-      // 3. Create a price/plan with pool metadata
-      const price = await stripe.prices.create({
-        unit_amount: 25000, // $250.00
-        currency: 'usd',
-        recurring: {
-          interval: 'month'
-        },
-        product: product.id,
-        metadata: {
-          pool_id: poolId
-        }
-      });
-  
-      // 4. Create a subscription
-      const subscription = await stripe.subscriptions.create({
-        customer: customer.id,
-        items: [{
-          price: price.id,
-        }],
-        metadata: {
-          pool_id: poolId
-        }
-      });
-  
-      // 5. Create an invoice
-      const invoice = await stripe.invoices.create({
-        customer: customer.id,
-        subscription: subscription.id,
-        metadata: {
-          pool_id: poolId
-        }
-      });
-  
-      // 6. Pay the invoice
-      await stripe.invoices.pay(invoice.id);
-  
-      // 7. Create payout
-      const payout = await stripe.payouts.create({
-        amount: 25000,
-        currency: 'usd',
-        metadata: {
-          pool_id: poolId
-        }
-      });
-  
-      res.json({
-        message: 'Production-like test created',
-        data: {
-          customer_id: customer.id,
-          product_id: product.id,
-          price_id: price.id,
-          subscription_id: subscription.id,
-          invoice_id: invoice.id,
-          payout_id: payout.id,
-          amount: 25000 / 100,
-          pool_id: poolId
-        }
-      });
-  
-    } catch (error) {
-      console.error('Error creating production test:', error);
-      res.status(500).json({ 
-        error: error.message,
-        type: error.type,
-        code: error.code 
-      });
-    }
-  },
   
   async updateSubscriptionPrice(req, res) {
     try {
@@ -1186,7 +1195,7 @@ export const handlers = {
   handleSubscriptionCreated,
   handleSubscriptionUpdated,
   handleSubscriptionCanceled,
-  handlePayoutPaid,handleCustomerUpdated  
+  handleCustomerUpdated  ,handleTransferCreated,handlePayoutPaid,handlePaymentSuccess
 };
 
 // Export utility functions for testing and reuse
