@@ -808,5 +808,240 @@ static async canResumeSubscription(poolId) {
       client.release();
     }
   }
+  static async createTransfer(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // Verify if transfer already exists
+      const existingTransfer = await this.executeQuery(`
+        SELECT 1 FROM payment_system.transfers 
+        WHERE transaction_id = $1
+      `, [data.transaction_id], client);
+  
+      if (existingTransfer.length > 0) {
+        console.log('Transfer already exists:', data.transaction_id);
+        await client.query('COMMIT');
+        return;
+      }
+  
+      // Insert transfer record
+      const query = `
+        INSERT INTO payment_system.transfers (
+          transaction_id,
+          customer_id,
+          payment_id,
+          payout_id,
+          pool_id,
+          amount,
+          currency,
+          payment_datetime,
+          status,
+          funds_settled_bank
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [
+        data.transaction_id,
+        data.customer_id,
+        data.payment_id,
+        data.payout_id || null,
+        data.pool_id,
+        data.amount,
+        data.currency,
+        data.payment_datetime,
+        'active',
+        true
+      ], client);
+  
+      // Log the transfer creation
+      await this.logPayment({
+        pool_id: data.pool_id,
+        event_type: 'transfer.created',
+        amount: data.amount / 100,
+        status: 'active',
+        metadata: {
+          transaction_id: data.transaction_id,
+          payment_id: data.payment_id,
+          customer_id: data.customer_id
+        }
+      }, client);
+  
+      await client.query('COMMIT');
+      return result[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  static async updateTransferWithPayout(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.transfers
+        SET 
+          payout_id = $1,
+          settlement_datetime = $2,
+          status = CASE 
+            WHEN status = 'failed' THEN 'failed'
+            ELSE 'active'
+          END
+        WHERE transaction_id = ANY($3)
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [
+        data.payout_id,
+        data.settlement_datetime,
+        data.transaction_ids
+      ], client);
+  
+      // Log payout association for each transfer
+      for (const transfer of result) {
+        await this.logPayment({
+          pool_id: transfer.pool_id,
+          event_type: 'transfer.payout_associated',
+          amount: transfer.amount / 100,
+          status: transfer.status,
+          metadata: {
+            transaction_id: transfer.transaction_id,
+            payout_id: data.payout_id,
+            settlement_datetime: data.settlement_datetime
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  static async markTransfersCancelled(poolId, reason = null) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.transfers
+        SET 
+          status = 'cancelled',
+          cancel_datetime = CURRENT_TIMESTAMP
+        WHERE pool_id = $1 
+        AND status = 'active'
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [poolId], client);
+  
+      // Log cancellation for each transfer
+      for (const transfer of result) {
+        await this.logPayment({
+          pool_id: poolId,
+          event_type: 'transfer.cancelled',
+          amount: transfer.amount / 100,
+          status: 'cancelled',
+          metadata: {
+            transaction_id: transfer.transaction_id,
+            reason: reason,
+            cancelled_at: new Date().toISOString()
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  static async markTransfersWithdrawn(payout_id) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.transfers
+        SET 
+          funds_withdrawn = true,
+          withdrawal_datetime = CURRENT_TIMESTAMP
+        WHERE payout_id = $1
+        AND funds_withdrawn = false
+        RETURNING *;
+      `;
+  
+      const result = await this.executeQuery(query, [payout_id], client);
+  
+      // Log withdrawal for each transfer
+      for (const transfer of result) {
+        await this.logPayment({
+          pool_id: transfer.pool_id,
+          event_type: 'transfer.withdrawn',
+          amount: transfer.amount / 100,
+          status: 'withdrawn',
+          metadata: {
+            transaction_id: transfer.transaction_id,
+            payout_id: payout_id,
+            withdrawn_at: new Date().toISOString()
+          }
+        }, client);
+      }
+  
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  static async getTransfersByPool(poolId) {
+    const query = `
+      SELECT 
+        t.*,
+        p.status as pool_status,
+        p.current_balance as pool_balance
+      FROM payment_system.transfers t
+      JOIN payment_system.pools p ON t.pool_id = p.pool_id
+      WHERE t.pool_id = $1
+      ORDER BY t.payment_datetime DESC;
+    `;
+  
+    try {
+      return await this.executeQuery(query, [poolId]);
+    } catch (error) {
+      throw error;
+    }
+  }
+  
+  static async getTransfersByPayout(payoutId) {
+    const query = `
+      SELECT * FROM payment_system.transfers
+      WHERE payout_id = $1
+      ORDER BY payment_datetime DESC;
+    `;
+  
+    try {
+      return await this.executeQuery(query, [payoutId]);
+    } catch (error) {
+      throw error;
+    }
+  }
   
 }
