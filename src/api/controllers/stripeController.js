@@ -496,7 +496,7 @@ async function handlePayoutPaid(payout) {
     const balanceTransactions = await stripe.balanceTransactions.list({
       payout: payout.id
     });
-
+    console.log('Balance Transactions:', balanceTransactions.data);
     // Update all transfers with payout information
     await PoolQueries.updateTransferWithPayout({
       payout_id: payout.id,
@@ -520,6 +520,7 @@ async function handleCustomerUpdated(customer) {
     const customerWithPaymentMethod = await stripe.customers.retrieve(customer.id, {
       expand: ['invoice_settings.default_payment_method']
     });
+
 
     const defaultPaymentMethod = customerWithPaymentMethod.invoice_settings.default_payment_method;
     
@@ -907,6 +908,44 @@ export const stripeController = {
     }
   },
 
+
+  async testingforpaymentype(req, res) {
+    try {
+      const { poolId } = req.params;
+
+      const result = await retryOperation(async () => {
+        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+        if (!subscriptions?.length) {
+          throw new Error('No subscription found for this pool');
+        }
+        
+
+        const customerId = subscriptions[0].customer_id;
+        const customerWithPaymentMethod = await stripe.customers.retrieve(customerId, {
+          expand: ['invoice_settings.default_payment_method']
+        });
+    
+
+       
+
+    
+
+        return {
+          customerWithPaymentMethod
+        };
+      }, 'updateSubscriptionPrice');
+
+      res.json({
+        message: 'Subscription price updated successfully',
+        ...result
+      });
+    } catch (error) {
+      console.error('Error updating subscription price:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  
   async cancelSubscription(req, res) {
     try {
       const { poolId } = req.params;
