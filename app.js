@@ -113,6 +113,8 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
   app.post('/pools/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
   app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);
+  app.post('/pools/:poolId/test-payment-method', authenticateToken,stripeController.testingforpaymentype);
+
   // config endpoint used for .env setup for stripe
   app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
   app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
