@@ -1224,7 +1224,49 @@ export const stripeController = {
         res.status(500).json({ error: 'Internal server error' });
       }
     }
+  },
+  async markTransfersWithdrawn(req, res) {
+    try {
+      const { payout_id } = req.params;
+      const result = await SubscriptionService.markTransfersWithdrawn(payout_id);
+      res.status(200).json({
+        message: 'Transfers marked as withdrawn successfully',
+        transfers: result
+      });
+    } catch (error) {
+      console.error('Error marking transfers as withdrawn:', error);
+      res.status(500).json({ error: 'Failed to mark transfers as withdrawn' });
+    }
+  },
+
+  async getTransfersByPool(req, res) {
+    try {
+      const { poolId } = req.params;
+      const result = await SubscriptionService.getTransfersByPool(poolId);
+      res.status(200).json({
+        message: 'Transfers fetched successfully',
+        transfers: result
+      });
+    } catch (error) {
+      console.error('Error fetching transfers by pool:', error);
+      res.status(500).json({ error: 'Failed to fetch transfers by pool' });
+    }
+  },
+
+   async getTransfersByPayout(req, res) {
+    try {
+      const { payoutId } = req.params;
+      const result = await SubscriptionService.getTransfersByPayout(payoutId);
+      res.status(200).json({
+        message: 'Transfers fetched successfully',
+        transfers: result
+      });
+    } catch (error) {
+      console.error('Error fetching transfers by payout:', error);
+      res.status(500).json({ error: 'Failed to fetch transfers by payout' });
+    }
   }
+
 };
 
 export const handlers = {
