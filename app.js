@@ -119,7 +119,10 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
   app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
 
-
+  app.post('/admin/transfers/withdraw/:payout_id', authenticateToken, stripeController.markTransfersWithdrawn);
+  app.get('/admin/:poolId/transfers', authenticateToken, stripeController.getTransfersByPool);
+  app.get('/admin/transfers/payout/:payoutId', authenticateToken, stripeController.getTransfersByPayout);
+  
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
