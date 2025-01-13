@@ -590,58 +590,6 @@ async function handleCustomerUpdated(customer) {
   });
 }
 
-async function handleTransferCreated(balanceTransaction) {
-  const sessionId = balanceTransaction.id;
-  logWebhookProgress('transfer.created', 'started', { transaction_id: sessionId });
-
-  await retryOperation(async () => {
-    // Check if we have a valid balance transaction
-    if (!balanceTransaction || !balanceTransaction.source) {
-      console.log('Invalid balance transaction:', balanceTransaction);
-      return;
-    }
-
-    // Log the balance transaction details
-    console.log('Balance Transaction:', {
-      id: balanceTransaction.id,
-      source: balanceTransaction.source,
-      type: balanceTransaction.type,
-      amount: balanceTransaction.amount,
-      currency: balanceTransaction.currency
-    });
-
-    // If it's a payment_intent source
-    if (balanceTransaction.source_type === 'payment_intent') {
-      const sourceTransaction = await stripe.paymentIntents.retrieve(
-        balanceTransaction.source
-      );
-
-      // Get subscription from payment intent
-      if (sourceTransaction.subscription) {
-        const subscription = await stripe.subscriptions.retrieve(
-          sourceTransaction.subscription
-        );
-
-        // Create transfer record
-        await PoolQueries.createTransfer({
-          transaction_id: balanceTransaction.id,
-          customer_id: sourceTransaction.customer,
-          payment_id: sourceTransaction.id,
-          pool_id: subscription.plan.metadata.pool_id,
-          amount: balanceTransaction.amount,
-          currency: balanceTransaction.currency,
-          payment_datetime: new Date(balanceTransaction.created * 1000)
-        });
-      }
-    }
-
-    logWebhookProgress('transfer.created', 'completed', {
-      transaction_id: balanceTransaction.id,
-      amount: balanceTransaction.amount,
-      type: balanceTransaction.type
-    });
-  }, 'handleTransferCreated');
-}
 export const stripeController = {
   // Handle checkout session creation
   async createCheckoutSession(req, res) {
@@ -741,21 +689,6 @@ export const stripeController = {
         case 'customer.updated':
           await handleCustomerUpdated(event.data.object);
           break;
-          case 'balance.available': {
-            console.log('Balance Available Event:', event.data.object);
-            const balanceTransaction = event.data.object;
-            
-            logWebhookProgress('balance.available', 'received', { 
-              event_id: event.id,
-              amount: balanceTransaction.amount,
-              currency: balanceTransaction.currency,
-              source: balanceTransaction.source,
-              source_type: balanceTransaction.source_type
-            });
-            
-            await handleTransferCreated(event.data.object);
-            break;
-          }
         case 'payout.paid':
           await handlePayoutPaid(event.data.object);
           break;
@@ -1276,7 +1209,7 @@ export const handlers = {
   handleSubscriptionCreated,
   handleSubscriptionUpdated,
   handleSubscriptionCanceled,
-  handleCustomerUpdated  ,handleTransferCreated,handlePayoutPaid,handlePaymentSuccess
+  handleCustomerUpdated  ,handlePayoutPaid,handlePaymentSuccess
 };
 
 // Export utility functions for testing and reuse
