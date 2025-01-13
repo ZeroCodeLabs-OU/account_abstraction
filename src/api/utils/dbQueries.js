@@ -852,7 +852,7 @@ static async canResumeSubscription(poolId) {
         data.currency,
         data.payment_datetime,
         'active',
-        true
+        false
       ], client);
   
       // Log the transfer creation
@@ -888,6 +888,7 @@ static async canResumeSubscription(poolId) {
         SET 
           payout_id = $1,
           settlement_datetime = $2,
+          funds_settled_bank = true,
           status = CASE 
             WHEN status = 'failed' THEN 'failed'
             ELSE 'active'
