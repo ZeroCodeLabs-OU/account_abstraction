@@ -341,17 +341,15 @@ export const Payment_Controller = {
 
     const poolInfo = await PoolQueries.getPoolInfo(pool_id);
       if (!poolInfo?.customer_id) {
-        return res.status(400).json({
+        return res.status(200).json({
           success: false,
           error: 'No customer found for this pool'
         });
       }
       const customerId=poolInfo.customer_id;
-      console.log('Pool info:', poolInfo);
       const paymentMethod = await getDefaultPaymentMethod(customerId);
-        console.log('Default payment method:', paymentMethod);
       if (paymentMethod.type !== 'card') {
-        return res.status(400).json({
+        return res.status(200).json({
           success: false,
           error: 'No card payment method found'
         });
