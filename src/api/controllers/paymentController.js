@@ -24,6 +24,67 @@ async function retryOperation(operation, maxRetries = MAX_RETRIES) {
   throw lastError;
 }
 
+async function handlePaymentIntentSucceeded(paymentIntent) {
+  try {
+    console.log('Processing payment intent:', paymentIntent);
+
+    // Get invoice since that's where our metadata is
+    const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+    if (!invoice?.metadata?.pool_id) {
+      console.error('No pool_id found in invoice metadata');
+      return;
+    }
+
+    // Check if transfer already exists
+    const existingTransfer = await PoolQueries.getTransferByPaymentIntent(paymentIntent.id);
+    if (existingTransfer) {
+      console.log('Transfer already exists for payment intent:', paymentIntent.id);
+      return;
+    }
+
+    // Get the charge and balance transaction
+    const charge = await stripe.charges.retrieve(paymentIntent.latest_charge, {
+      expand: ['balance_transaction']
+    });
+
+    if (!charge.balance_transaction) {
+      console.error('No balance transaction found for charge:', charge.id);
+      return;
+    }
+
+    // Create transfer record
+    await PoolQueries.createTransfer({
+      transaction_id: charge.balance_transaction.id,
+      payment_intent_id: paymentIntent.id,
+      invoice_id: paymentIntent.invoice,
+      pool_id: invoice.metadata.pool_id,
+      amount: paymentIntent.amount / 100,
+      currency: paymentIntent.currency,
+      payment_datetime: new Date(paymentIntent.created * 1000),
+      status: 'active',
+      metadata: {
+        charge_id: charge.id,
+        payment_method: paymentIntent.payment_method,
+        balance_transaction: {
+          amount: charge.balance_transaction.amount,
+          fee: charge.balance_transaction.fee,
+          net: charge.balance_transaction.net,
+          available_on: charge.balance_transaction.available_on
+        }
+      }
+    });
+
+    console.log('Transfer record created:', {
+      payment_intent_id: paymentIntent.id,
+      transaction_id: charge.balance_transaction.id,
+      amount: paymentIntent.amount / 100
+    });
+
+  } catch (error) {
+    console.error('Error in handlePaymentIntentSucceeded:', error);
+    throw error;
+  }
+}
 // Webhook event handlers
 async function handleSetupIntentSucceeded(setupIntent) {
   const { customer, payment_method, metadata } = setupIntent;
@@ -83,83 +144,31 @@ async function handlePaymentIntentFailed(paymentIntent) {
   }
 }
 async function handlePayoutPaid(payout) {
-    try {
-      console.log('Processing payout:', {
-        payout_id: payout.id,
-        amount: payout.amount,
-        arrival_date: payout.arrival_date
-      });
-  
-      // Get all balance transactions for this payout
-      const balanceTransactions = await stripe.balanceTransactions.list({
-        payout: payout.id,
-        expand: ['data.source']  // This expands payment_intent details
-      });
-  
-      console.log('Balance Transactions found:', balanceTransactions.data.length);
-  
-      // Create payout record
-      await PoolQueries.createOrUpdatePayout({
-        payout_id: payout.id,
-        amount: payout.amount / 100, // Convert from cents
-        currency: payout.currency,
-        bank_arrival_date: new Date(payout.arrival_date * 1000),
-        status: 'succeeded',
-        metadata: {
-          stripe_status: payout.status,
-          automatic: payout.automatic,
-          method: payout.method,
-          type: payout.type,
-          statement_descriptor: payout.statement_descriptor
-        }
-      });
-  
-      // Process each balance transaction
-      for (const transaction of balanceTransactions.data) {
-        const paymentIntent = transaction.source;
-        
-        if (paymentIntent && paymentIntent.metadata.pool_id) {
-          await PoolQueries.updateBalanceTransactionPayout({
-            payout_id: payout.id,
-            pool_id: paymentIntent.metadata.pool_id,
-            transaction_id: transaction.id,
-            payment_intent_id: paymentIntent.id,
-            amount: transaction.amount,
-            net: transaction.net,
-            fee: transaction.fee,
-            available_on: new Date(transaction.available_on * 1000),
-            type: transaction.type,
-            metadata: {
-              source_type: transaction.source_type,
-              status: transaction.status
-            }
-          });
-        }
-      }
-  
-      // Log the payout success
-      await PoolQueries.logPayoutEvent({
-        payout_id: payout.id,
-        event_type: 'payout.paid',
-        amount: payout.amount / 100,
-        currency: payout.currency,
-        metadata: {
-          transaction_count: balanceTransactions.data.length,
-          processed_at: new Date().toISOString()
-        }
-      });
-  
-      console.log('Payout processed successfully:', {
-        payout_id: payout.id,
-        transactions_processed: balanceTransactions.data.length
-      });
-  
-    } catch (error) {
-      console.error('Error processing payout:', error);
-      throw error;
-    }
-  }
+  try {
+    console.log('Processing payout:', payout.id);
 
+    // Get all balance transactions for this payout
+    const balanceTransactions = await stripe.balanceTransactions.list({
+      payout: payout.id
+    });
+
+    // Update all transfers with payout information
+    await PoolQueries.updateTransfersWithPayout({
+      payout_id: payout.id,
+      settlement_datetime: new Date(payout.arrival_date * 1000),
+      transaction_ids: balanceTransactions.data.map(t => t.id)
+    });
+
+    console.log('Payout processed:', {
+      payout_id: payout.id,
+      transactions_processed: balanceTransactions.data.length
+    });
+
+  } catch (error) {
+    console.error('Error processing payout:', error);
+    throw error;
+  }
+}
 async function createCustomer({ pool_id, email }) {
     try {
       if (!pool_id || !email) {
@@ -237,7 +246,14 @@ async function createCustomer({ pool_id, email }) {
         case 'setup_intent.succeeded':
           await retryOperation(() => handleSetupIntentSucceeded(event.data.object));
           break;
-  
+        case 'charge.succeeded':
+          console.log('Charge succeeded:', event.data.object);
+          const charge = event.data.object;
+          if (charge.payment_intent) {
+            const paymentIntent = await stripe.paymentIntents.retrieve(charge.payment_intent);
+            await retryOperation(() => handlePaymentIntentSucceeded(paymentIntent));
+            }
+            break;
     
           case 'payout.paid':
             await retryOperation(() => handlePayoutPaid(event.data.object));
@@ -330,7 +346,7 @@ export const Payment_Controller = {
   // Get payment method details
   async getPaymentMethodDetails(req, res) {
     try {
-      const { pool_id } = req.body;
+      const { pool_id } = req.params;
 
       if (!pool_id) {
         return res.status(400).json({
@@ -505,7 +521,11 @@ export const Payment_Controller = {
         auto_advance: true,
         collection_method: 'charge_automatically',
         default_payment_method: defaultPaymentMethodId.id,
-        pending_invoice_items_behavior: 'include'
+        pending_invoice_items_behavior: 'include',
+        metadata: {
+          pool_id,
+          description
+        } 
       });
 
       console.log('Invoice created:', invoice); // Debug log
@@ -542,7 +562,30 @@ export const Payment_Controller = {
           stripe_amount: paidInvoice.amount_paid // Store Stripe amount for reference
         }
       });
+      // const charge = await stripe.charges.retrieve(paidInvoice.payment_intent, {
+      //   expand: ['balance_transaction']
+      // });
 
+      // await PoolQueries.createTransfer({
+      //   transaction_id: charge.balance_transaction.id,
+      //   payment_intent_id: paidInvoice.payment_intent,
+      //   invoice_id: paidInvoice.id,
+      //   pool_id: pool_id,
+      //   amount: paidInvoice.amount_paid,
+      //   currency: currency,
+      //   payment_datetime: new Date(),
+      //   status: 'active',
+      //   metadata: {
+      //     charge_id: charge.id,
+      //     payment_method: defaultPaymentMethodId.id,
+      //     balance_transaction: {
+      //       amount: charge.balance_transaction.amount,
+      //       fee: charge.balance_transaction.fee,
+      //       net: charge.balance_transaction.net,
+      //       available_on: charge.balance_transaction.available_on
+      //     }
+      //   }
+      // });
       res.status(200).json({
         success: true,
         data: {
@@ -564,3 +607,10 @@ export const Payment_Controller = {
 }
 
 };
+
+
+
+//create a table for stan disteribution
+//filter and add all the participants to the table track them with invoice id and pool id
+//do the percentage calculation and distribute the funds to the participants
+//update the table with the status of the payment

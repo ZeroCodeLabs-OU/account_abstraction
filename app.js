@@ -129,9 +129,9 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   // app.post("/test/subscription-card/update",stripeController.createBillingPortalSession);
 
   app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
-  app.get("/pools/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
+  app.get("/pools/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
-  // app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
+  app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
