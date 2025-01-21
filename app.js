@@ -31,12 +31,13 @@ import {getERC20Balance,depositToPool,withdrawUSDC,batchSendUSDC,getPoolTreasury
 
 import {stripeController  } from './src/api/controllers/stripeController.js';
 
+import {Payment_Controller,handleStripeWebhook   } from './src/api/controllers/paymentController.js';
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const storage = multer.memoryStorage();
 
-app.post('/webhook', express.raw({type: 'application/json'}), stripeController.handleWebhook);
+app.post('/webhook', express.raw({type: 'application/json'}), handleStripeWebhook );
 
 app.use(express.json());
 
@@ -102,27 +103,35 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   
   
   //stripe
-  app.post('/pools/create-checkout',authenticateToken, stripeController.createCheckoutSession);
-  app.get('/pools/:poolId/subscriptions',authenticateToken, stripeController.getSubscriptionsByPoolId);
-  app.get('/pools/:poolId/balance',authenticateToken, stripeController.getPoolBalance);
-  app.get('/pools/:poolId/invoices',authenticateToken, stripeController.getInvoiceTransactions);
+  // app.post('/pools/create-checkout',authenticateToken, stripeController.createCheckoutSession);
+  // app.get('/pools/:poolId/subscriptions',authenticateToken, stripeController.getSubscriptionsByPoolId);
+  // app.get('/pools/:poolId/balance',authenticateToken, stripeController.getPoolBalance);
+  // app.get('/pools/:poolId/invoices',authenticateToken, stripeController.getInvoiceTransactions);
 
-  app.post('/pools/:poolId/cancel',authenticateToken, stripeController.cancelSubscription);
-  app.post('/pools/:poolId/pause',authenticateToken, stripeController.PauseSubscription);
-  app.post('/pools/:poolId/resume',authenticateToken, stripeController.ResumeSubscription);
+  // app.post('/pools/:poolId/cancel',authenticateToken, stripeController.cancelSubscription);
+  // app.post('/pools/:poolId/pause',authenticateToken, stripeController.PauseSubscription);
+  // app.post('/pools/:poolId/resume',authenticateToken, stripeController.ResumeSubscription);
 
-  app.post('/pools/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
-  app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);
-  app.post('/pools/:poolId/test-payment-method', authenticateToken,stripeController.testingforpaymentype);
+  // app.post('/pools/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
+  // app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);
+  // app.post('/pools/:poolId/test-payment-method', authenticateToken,stripeController.testingforpaymentype);
 
-  // config endpoint used for .env setup for stripe
-  app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
-  app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
+  // // config endpoint used for .env setup for stripe
+  // app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
+  // app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
 
-  app.post('/admin/transfers/withdraw/:payout_id', authenticateToken, stripeController.markTransfersWithdrawn);
-  app.get('/admin/:poolId/transfers', authenticateToken, stripeController.getTransfersByPool);
-  app.get('/admin/transfers/payout/:payoutId', authenticateToken, stripeController.getTransfersByPayout);
-  
+  // app.post('/admin/transfers/withdraw/:payout_id', authenticateToken, stripeController.markTransfersWithdrawn);
+  // app.get('/admin/:poolId/transfers', authenticateToken, stripeController.getTransfersByPool);
+  // app.get('/admin/transfers/payout/:payoutId', authenticateToken, stripeController.getTransfersByPayout);
+
+  // app.post("/test/subscription",stripeController.createAndChargeInvoice);
+  // app.post("/test/subscription-card",stripeController.createSetupSession);
+  // app.post("/test/subscription-card/update",stripeController.createBillingPortalSession);
+
+  app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
+  app.get("/pools/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
+  app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
+  // app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');

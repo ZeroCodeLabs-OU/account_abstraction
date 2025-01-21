@@ -1,6 +1,5 @@
 import Stripe from 'stripe';
 import { PoolQueries } from '../utils/dbQueries.js';
-import e from 'express';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -15,7 +14,47 @@ const WEBHOOK_PRIORITIES = {
   'customer.subscription.updated': 4,
   'payout.paid': 5
 };
+// Helper function to validate and parse different date formats
+function parseBillingStartDate(dateInput) {
+  let startDate;
+  
+  // Case 1: Date string (YYYY-MM-DD)
+  if (typeof dateInput === 'string') {
+    if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      startDate = new Date(dateInput);
+    } else {
+      throw new Error('Invalid date string format. Use YYYY-MM-DD');
+    }
+  }
+  // Case 2: Unix timestamp (in seconds)
+  else if (Number.isInteger(dateInput) && dateInput.toString().length === 10) {
+    startDate = new Date(dateInput * 1000);
+  }
+  // Case 3: JavaScript timestamp (in milliseconds)
+  else if (Number.isInteger(dateInput) && dateInput.toString().length === 13) {
+    startDate = new Date(dateInput);
+  }
+  // Case 4: Date object
+  else if (dateInput instanceof Date) {
+    startDate = dateInput;
+  }
+  else {
+    throw new Error('Invalid date format');
+  }
 
+  // Validate date is valid
+  if (isNaN(startDate.getTime())) {
+    throw new Error('Invalid date');
+  }
+
+  // Validate date is in the future
+  if (startDate <= new Date()) {
+    throw new Error('Start date must be in the future');
+  }
+
+  // Return Unix timestamp for Stripe
+  return Math.floor(startDate.getTime() / 1000);
+}
 // Webhook Queue Manager
 class WebhookQueueManager {
   constructor() {
@@ -110,7 +149,49 @@ async function ensurePoolExists(poolId, poolData) {
     throw error;
   }
 }
+async function createCustomer({ pool_id, email, name }) {
+  try {
+    // Validate required fields
+    if (!pool_id || !email) {
+      throw new Error('pool_id and email are required');
+    }
 
+    // Check if a customer with the same email and pool_id exists
+    const customers = await stripe.customers.list({
+      email: email
+    });
+
+    const existingCustomer = customers.data.find(
+      (customer) => customer.metadata.pool_id === pool_id
+    );
+
+    if (existingCustomer) {
+      return {
+        customerId: existingCustomer.id,
+        existing: true
+      };
+    }
+
+    // Create a new customer if no match is found
+    const customer = await stripe.customers.create({
+      email,
+      name,
+      metadata: {
+        pool_id,
+        registrationDate: new Date().toISOString()
+      }
+    });
+
+    return {
+      customerId: customer.id,
+      existing: false
+    };
+
+  } catch (error) {
+    console.error('Create customer error:', error);
+    throw new Error(error.message);
+  }
+}
 async function verifySubscriptionExists(subscriptionId) {
   const subscription = await PoolQueries.executeQuery(
     'SELECT 1 FROM payment_system.stripe_subscriptions WHERE subscription_id = $1',
@@ -316,6 +397,40 @@ async function handleInvoicePaid(invoice) {
       status: 'succeeded'
     });
   }, 'handleInvoicePaid');
+}
+async function getDefaultPaymentMethod(customerId) {
+  try {
+    // Fetch the customer to get the default payment method
+    const customer = await stripe.customers.retrieve(customerId);
+
+    // Check if the customer has a default payment method set
+    const defaultPaymentMethodId = customer.invoice_settings.default_payment_method;
+
+    if (!defaultPaymentMethodId) {
+      throw new Error('No default payment method set for this customer');
+    }
+
+    // Retrieve the default payment method details
+    const paymentMethod = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
+
+    return paymentMethod;
+  } catch (error) {
+    console.error('Error fetching default payment method:', error.message);
+    throw error;
+  }
+}
+
+
+// Clear any pending invoice items
+async function clearPendingInvoiceItems(customerId) {
+  const existingItems = await stripe.invoiceItems.list({
+    customer: customerId,
+    pending: true
+  });
+
+  for (const item of existingItems.data) {
+    await stripe.invoiceItems.del(item.id);
+  }
 }
 
 async function handleInvoiceFailed(invoice) {
@@ -594,9 +709,11 @@ export const stripeController = {
   // Handle checkout session creation
   async createCheckoutSession(req, res) {
     try {
-      const { amount, currency, interval, pool_id, owner_id, username, email } = req.body;
+      const { amount, currency, interval, pool_id, owner_id, username, email,startDate } = req.body;
       
       const hasSubscription = await PoolQueries.hasActiveSubscription(pool_id);
+      const billingStartTimestamp = parseBillingStartDate(startDate);
+
       await retryOperation(async () => {
         // Check for existing subscription
         if (hasSubscription) {
@@ -631,8 +748,80 @@ export const stripeController = {
       console.error('Checkout Error:', error);
       res.status(500).json({ error: error.message });
     }
-  },
+  }
+  ,
+  async createSetupSession(req, res) {
+    try {
+      const { email, pool_id, name } = req.body;
 
+      // Ensure required fields are provided
+      if (!email || !pool_id) {
+        return res.status(400).json({
+          success: false,
+          error: 'email and pool_id are required'
+        });
+      }
+
+      // Use the internal createCustomer function
+      const { customerId } = await createCustomer({ pool_id, email, name });
+
+      // Create a setup session for the customer
+      const session = await stripe.checkout.sessions.create({
+        mode: 'setup',
+        customer: customerId,
+        payment_method_types: ['card'],
+        success_url: `${process.env.FRONTEND_URL}?setup=success`,
+        cancel_url: `${process.env.FRONTEND_URL}?setup=cancelled`
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          sessionId: session.id,
+          url: session.url,
+          customerId: customerId
+        }
+      });
+
+    } catch (error) {
+      console.error('Create setup session error:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+,
+
+async  createBillingPortalSession(req, res) {
+  try {
+    const { customerId } = req.body;
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Customer ID is required',
+      });
+    }
+
+    // Create a billing portal session
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: process.env.FRONTEND_URL, // URL to redirect after the user finishes
+    });
+
+    res.status(200).json({
+      success: true,
+      url: session.url,
+    });
+  } catch (error) {
+    console.error('Error creating billing portal session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+},
   async createProductId(req, res) {
     try {
       const { name, description } = req.body;
@@ -677,18 +866,18 @@ export const stripeController = {
         case 'invoice.payment_failed':
           await handleInvoiceFailed(event.data.object);
           break;
-        case 'customer.subscription.created':
-          await handleSubscriptionCreated(event.data.object);
-          break;
-        case 'customer.subscription.updated':
-          await handleSubscriptionUpdated(event.data.object);
-          break;
-        case 'customer.subscription.deleted':
-          await handleSubscriptionCanceled(event.data.object);
-          break;
-        case 'customer.updated':
-          await handleCustomerUpdated(event.data.object);
-          break;
+        // case 'customer.subscription.created':
+        //   await handleSubscriptionCreated(event.data.object);
+        //   break;
+        // case 'customer.subscription.updated':
+        //   await handleSubscriptionUpdated(event.data.object);
+        //   break;
+        // case 'customer.subscription.deleted':
+        //   await handleSubscriptionCanceled(event.data.object);
+        //   break;
+        // case 'customer.updated':
+        //   await handleCustomerUpdated(event.data.object);
+        //   break;
         case 'payout.paid':
           await handlePayoutPaid(event.data.object);
           break;
@@ -775,9 +964,74 @@ export const stripeController = {
       res.status(500).json({ error: error.message });
     }
   },
+ 
+  async createAndChargeInvoice(req, res) {
+    try {
+      const { customerId, amount, description } = req.body;
 
-  
-  
+      // 1. Get default payment method
+      const defaultPaymentMethodId = await getDefaultPaymentMethod(customerId).id;
+      console.log("defaultPaymentMethodId",defaultPaymentMethodId);
+      // 2. Clear any pending invoice items
+      await clearPendingInvoiceItems(customerId);
+
+      // 3. Create new invoice item
+      const invoiceItem = await stripe.invoiceItems.create({
+        customer: customerId,
+        amount: amount,
+        currency: 'usd',
+        description: description
+      });
+
+      // 4. Create invoice with default payment method
+      const invoice = await stripe.invoices.create({
+        customer: customerId,
+        auto_advance: true,
+        collection_method: 'charge_automatically',
+        default_payment_method: defaultPaymentMethodId,
+        pending_invoice_items_behavior: 'include'
+      });
+
+      // 5. Pay the invoice
+      const paidInvoice = await stripe.invoices.pay(invoice.id, {
+        payment_method: defaultPaymentMethodId,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          invoiceId: paidInvoice.id,
+          amount: paidInvoice.amount_paid,
+          status: paidInvoice.status,
+          paymentMethod: {
+            id: defaultPaymentMethodId,
+            isDefault: true
+          },
+          hostedInvoiceUrl: paidInvoice.hosted_invoice_url,
+          pdfUrl: paidInvoice.invoice_pdf,
+          lineItems: paidInvoice.lines.data
+        }
+      });
+
+    } catch (error) {
+      console.error('Invoice creation error:', error);
+      
+      // Specific error handling
+      if (error.message.includes('No default payment method found')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please set up a payment method before creating an invoice'
+        });
+      }
+
+      // Handle other Stripe errors
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  ,
   async updateSubscriptionPrice(req, res) {
     try {
       const { poolId } = req.params;
@@ -1209,7 +1463,7 @@ export const handlers = {
   handleSubscriptionCreated,
   handleSubscriptionUpdated,
   handleSubscriptionCanceled,
-  handleCustomerUpdated  ,handlePayoutPaid,handlePaymentSuccess
+  handleCustomerUpdated  ,handlePayoutPaid,handlePaymentSuccess,getDefaultPaymentMethod,clearPendingInvoiceItems,createCustomer
 };
 
 // Export utility functions for testing and reuse
