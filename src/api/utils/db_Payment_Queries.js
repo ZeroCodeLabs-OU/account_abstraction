@@ -277,4 +277,85 @@ export class PoolQueries {
       throw error;
     }
   }
+
+  static async updateTransfersWithPayout(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        UPDATE payment_system.transfers
+        SET 
+          payout_id = $1,
+          settlement_datetime = $2,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE transaction_id = ANY($3)
+        RETURNING *;
+      `;
+  
+      const result = await client.query(query, [
+        data.payout_id,
+        data.settlement_datetime,
+        data.transaction_ids
+      ]);
+  
+      await client.query('COMMIT');
+      return result.rows;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async createTransfer(data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const query = `
+        INSERT INTO payment_system.transfers
+        (transaction_id, payment_intent_id, invoice_id, pool_id, 
+         amount, currency, payment_datetime, status, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *;
+      `;
+  
+      const result = await client.query(query, [
+        data.transaction_id,
+        data.payment_intent_id,
+        data.invoice_id,
+        data.pool_id,
+        data.amount,
+        data.currency,
+        data.payment_datetime,
+        data.status,
+        data.metadata
+      ]);
+  
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  static async getTransferByPaymentIntent(paymentIntentId) {
+    const query = `
+      SELECT * FROM payment_system.transfers 
+      WHERE payment_intent_id = $1 
+      LIMIT 1;
+    `;
+  
+    try {
+      const result = await pool.query(query, [paymentIntentId]);
+      return result.rows[0];
+    } catch (error) {
+      console.error('Error getting transfer:', error);
+      throw error;
+    }
+  }
 }
