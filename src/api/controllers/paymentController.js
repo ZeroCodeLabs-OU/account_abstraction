@@ -281,30 +281,25 @@ async function createCustomer({ pool_id, email }) {
       });
     }
   };
-async function getDefaultPaymentMethod(customerId) {
-  try {
-    if (!customerId) {
-      throw new Error('Customer ID is required');
+  async function getDefaultPaymentMethod(customerId) {
+    try {
+      if (!customerId) {
+        return null;
+      }
+      
+      const customer = await stripe.customers.retrieve(customerId);
+      const defaultPaymentMethodId = customer.invoice_settings.default_payment_method;
+  
+      if (!defaultPaymentMethodId) {
+        return null;
+      }
+  
+      return await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
+    } catch (error) {
+      console.error('Error fetching default payment method:', error);
+      return null;
     }
-    // Retrieve the customer details
-    const customer = await stripe.customers.retrieve(customerId);
-
-    // Check if the customer has a default payment method set
-    const defaultPaymentMethodId = customer.invoice_settings.default_payment_method;
-
-    if (!defaultPaymentMethodId) {
-      throw new Error('No default payment method set for this customer');
-    }
-
-    // Retrieve the default payment method details
-    const paymentMethod = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
-
-    return paymentMethod;
-  } catch (error) {
-    console.error('Error fetching default payment method:', error);
-    throw error;
   }
-}
 async function clearPendingInvoiceItems(customerId) {
     const existingItems = await stripe.invoiceItems.list({
       customer: customerId,
@@ -347,30 +342,31 @@ export const Payment_Controller = {
   async getPaymentMethodDetails(req, res) {
     try {
       const { pool_id } = req.params;
-
+  
       if (!pool_id) {
         return res.status(400).json({
           success: false,
           error: 'Pool ID is required'
         });
       }
-
-    const poolInfo = await PoolQueries.getPoolInfo(pool_id);
+  
+      const poolInfo = await PoolQueries.getPoolInfo(pool_id);
       if (!poolInfo?.customer_id) {
         return res.status(200).json({
           success: false,
           error: 'No customer found for this pool'
         });
       }
-      const customerId=poolInfo.customer_id;
-      const paymentMethod = await getDefaultPaymentMethod(customerId);
-      if (paymentMethod.type !== 'card') {
+  
+      const paymentMethod = await getDefaultPaymentMethod(poolInfo.customer_id);
+      
+      if (!paymentMethod || paymentMethod.type !== 'card') {
         return res.status(200).json({
           success: false,
           error: 'No card payment method found'
         });
       }
-
+  
       res.status(200).json({
         success: true,              
         data: {
@@ -396,91 +392,126 @@ export const Payment_Controller = {
   // Setup customer and add card
   async createSetupSession(req, res) {
     try {
-      const { email, pool_id, network } = req.body;
-      const { wallet_data } = req.auth;
+        const { email, pool_id, network } = req.body;
+        const { wallet_data } = req.auth;
 
-      if (!wallet_data?.encryptedData || !wallet_data?.iv) {
-        return res.status(400).json({ error: 'Invalid encrypted wallet data' });
-      }
-
-      if (!email || !pool_id) {
-        return res.status(400).json({
-          success: false,
-          error: 'email and pool_id are required'
-        });
-      }
-      const poolInfo = await PoolQueries.getPoolInfo(pool_id);
-      if (poolInfo) {
-        return res.status(400).json({
-          success: false,
-          poolInfo:poolInfo,
-          error: 'Pool already exists'
-        });
-      }
-      if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-        return res.status(400).json({
-          error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.'
-        });
-      }
-
-      // Get signer and configuration
-      const { signer, config } = getSigner_network(wallet_data, network);
-      const paymaster = await createPaymaster({
-        paymasterUrl: config.PAYMASTER_URL,
-        strictMode: true,
-      });
-
-      const biconomySmartAccount = await createSmartAccountClient({
-        signer,
-        paymaster,
-        bundlerUrl: config.BUNDLER_URL,
-      });
-
-      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-
-      // Create pool first
-      await PoolQueries.createOrUpdatePool({
-        pool_id,
-        email,
-        smartAccountAddress,
-        metadata: {
-          registration_source: 'setup_session',
-          registration_date: new Date().toISOString()
+        if (!wallet_data?.encryptedData || !wallet_data?.iv) {
+            return res.status(400).json({ error: 'Invalid encrypted wallet data' });
         }
-      });
 
-      // Create/get customer
-      const { customerId, existing } = await createCustomer({ pool_id, email });
+        if (!email || !pool_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'email and pool_id are required'
+            });
+        }
 
-      // Create setup session
-      const session = await stripe.checkout.sessions.create({
-        mode: 'setup',
-        customer: customerId,
-        payment_method_types: ['card'],
-        success_url: `${process.env.FRONTEND_URL}/success`,
-        cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-        metadata: {
-          pool_id,
-          smartAccountAddress
+        // First check if pool exists and matches provided email
+        const poolInfo = await PoolQueries.getPoolInfo(pool_id);
+        if (poolInfo) {
+            // If pool exists, verify email matches
+            if (poolInfo.email !== email) {
+                return res.status(200).json({
+                    success: false,
+                    error: 'Email does not match pool records',
+                    data: {
+                        pool_id,
+                        provided_email: email,
+                        stored_email: poolInfo.email
+                    }
+                });
+            }
+
+            // If pool has customer_id, check for existing payment method
+            if (poolInfo.customer_id) {
+                const paymentMethod = await getDefaultPaymentMethod(poolInfo.customer_id);
+                if (paymentMethod) {
+                    return res.status(200).json({
+                        success: false,
+                        error: 'Default payment method already exists',
+                        data: {
+                            card: {
+                                brand: paymentMethod.card.brand,
+                                last4: paymentMethod.card.last4,
+                                exp_month: paymentMethod.card.exp_month,
+                                exp_year: paymentMethod.card.exp_year
+                            },
+                            message: 'Please use update-card endpoint to modify payment method'
+                        }
+                    });
+                }
+            }
         }
-      });   
-      res.status(200).json({
-        success: true,
-        data: {
-          sessionId: session.id,
-          url: session.url,
-          customerId: customerId,
-          existing: existing
+
+        // Network validation
+        if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+            return res.status(400).json({
+                error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.'
+            });
         }
-      });
+
+        let smartAccountAddress;
+        // Only create new smart account if pool doesn't exist
+        if (!poolInfo) {
+            const { signer, config } = getSigner_network(wallet_data, network);
+            const paymaster = await createPaymaster({
+                paymasterUrl: config.PAYMASTER_URL,
+                strictMode: true,
+            });
+
+            const biconomySmartAccount = await createSmartAccountClient({
+                signer,
+                paymaster,
+                bundlerUrl: config.BUNDLER_URL,
+            });
+
+            smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+
+            // Create pool if it doesn't exist
+            await PoolQueries.createOrUpdatePool({
+                pool_id,
+                email,
+                smartAccountAddress,
+                metadata: {
+                    registration_source: 'setup_session',
+                    registration_date: new Date().toISOString()
+                }
+            });
+        }
+
+        // Create/get customer
+        const { customerId, existing } = await createCustomer({ pool_id, email });
+
+        // Create setup session
+        const session = await stripe.checkout.sessions.create({
+            mode: 'setup',
+            customer: customerId,
+            payment_method_types: ['card'],
+            success_url: `${process.env.FRONTEND_URL}/success`,
+            cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+            metadata: {
+                pool_id,
+                smartAccountAddress: smartAccountAddress || poolInfo?.smart_account_address
+            }
+        });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                sessionId: session.id,
+                url: session.url,
+                customerId: customerId,
+                existing: existing
+            }
+        });
     } catch (error) {
-      console.error('Create setup session error:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+        console.error('Create setup session error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
-  },
+},
   async createAndChargeInvoice(req, res) {
     try {
       const { amount, pool_id, description, currency } = req.body;
@@ -610,7 +641,3 @@ export const Payment_Controller = {
 
 
 
-//create a table for stan disteribution
-//filter and add all the participants to the table track them with invoice id and pool id
-//do the percentage calculation and distribute the funds to the participants
-//update the table with the status of the payment
