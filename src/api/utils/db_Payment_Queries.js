@@ -358,4 +358,36 @@ export class PoolQueries {
       throw error;
     }
   }
+  static async updatePoolEmail(data) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const query = `
+            UPDATE payment_system.pools
+            SET 
+                email = $2,
+                metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE pool_id = $1
+            RETURNING *;
+        `;
+
+        const result = await client.query(query, [
+            data.pool_id,
+            data.email,
+            data.metadata || {}
+        ]);
+
+        
+
+        await client.query('COMMIT');
+        return result.rows[0];
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
 }
