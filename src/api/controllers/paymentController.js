@@ -635,6 +635,71 @@ export const Payment_Controller = {
         error: error.message
       });
     }
+},
+async updatePoolEmail(req, res) {
+  try {
+      const { pool_id, new_email } = req.body;
+
+      // Validate inputs
+      if (!pool_id || !new_email) {
+          return res.status(400).json({
+              success: false,
+              error: 'pool_id and new_email are required'
+          });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(new_email)) {
+          return res.status(400).json({
+              success: false,
+              error: 'Invalid email format'
+          });
+      }
+
+      // Check if pool exists
+      const poolInfo = await PoolQueries.getPoolInfo(pool_id);
+      if (!poolInfo) {
+          return res.status(200).json({
+              success: false,
+              error: 'Pool not found'
+          });
+      }
+
+      // If pool has a customer, update email in Stripe too
+      if (poolInfo.customer_id) {
+          await stripe.customers.update(poolInfo.customer_id, {
+              email: new_email
+          });
+      }
+
+      // Update pool email
+      const updatedPool = await PoolQueries.updatePoolEmail({
+          pool_id,
+          email: new_email,
+          metadata: {
+              previous_email: poolInfo.email,
+              updated_at: new Date().toISOString()
+          }
+      });
+
+      res.status(200).json({
+          success: true,
+          data: {
+              pool_id: updatedPool.pool_id,
+              email: updatedPool.email,
+              previous_email: poolInfo.email,
+              updated_at: updatedPool.updated_at
+          }
+      });
+
+  } catch (error) {
+      console.error('Error updating pool email:', error);
+      res.status(500).json({
+          success: false,
+          error: error.message
+      });
+  }
 }
 
 };
