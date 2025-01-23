@@ -136,7 +136,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
   app.post('/pools/rewards/initialize',authenticateToken, Payment_Controller.initializePoolRewards);
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
-
+  app.post('/get-smart-acount',authenticateToken, Payment_Controller.createSmartAccount);
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
