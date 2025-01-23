@@ -2,11 +2,17 @@ import Stripe from 'stripe';
 import { PoolQueries } from '../utils/db_Payment_Queries.js';
 import { getSigner, getSigner_network } from '../services/biconomyService.js';
 import { createSmartAccountClient, createPaymaster } from '@biconomy/account';
+import { ethers } from 'ethers';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
-
+const USDC_ABI = [
+  "function transfer(address to, uint256 amount) external returns (bool)",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function balanceOf(address account) external view returns (uint256)",
+  "function decimals() external view returns (uint8)"
+];
 // Helper function for retrying operations
 async function retryOperation(operation, maxRetries = MAX_RETRIES) {
   let lastError;
@@ -84,6 +90,158 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
     console.error('Error in handlePaymentIntentSucceeded:', error);
     throw error;
   }
+}
+async function calculateAndDistributeRewards(poolId, invoiceId, walletData, network, usdcTokenAddress) {
+  // Biconomy setup
+  const { signer, config } = getSigner_network(walletData, network);
+  const paymaster = await createPaymaster({
+      paymasterUrl: config.PAYMASTER_URL,
+      strictMode: true,
+  });
+
+  const biconomyAccount = await createSmartAccountClient({
+      signer,
+      paymaster,
+      bundlerUrl: config.BUNDLER_URL,
+  });
+
+  // Get USDC info
+  const smartAccountAddress = await biconomyAccount.getAccountAddress();
+  const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+  const usdcContract = new ethers.Contract(usdcTokenAddress, USDC_ABI, provider);
+  
+  const decimals = await usdcContract.decimals();
+  const balance = await usdcContract.balanceOf(smartAccountAddress);
+  const usdcBalance = ethers.formatUnits(balance, decimals);
+
+  // Get rewards
+  const pendingRewards = await PoolQueries.getPendingRewardsForDistribution(poolId, invoiceId);
+  if (!pendingRewards.length) {
+      throw new Error('No pending rewards found');
+  }
+
+  // Calculate USDC amounts
+  const totalPercentage = pendingRewards.reduce((sum, r) => sum + parseFloat(r.reward_percentage), 0);
+  if (Math.abs(totalPercentage - 100) > 0.01) {
+      throw new Error('Reward percentages must total 100%');
+  }
+
+  const rewardsWithUsdc = pendingRewards.map(reward => ({
+      ...reward,
+      calculated_reward_usdc: (parseFloat(usdcBalance) * reward.reward_percentage) / 100
+  }));
+
+  // Update USDC amounts
+  await PoolQueries.updateRewardsWithUsdcAmounts(rewardsWithUsdc);
+
+  // Execute transfers
+  const transfers = rewardsWithUsdc.map(reward => ({
+      to: reward.smart_account_address,
+      amount: reward.calculated_reward_usdc.toString()
+  }));
+
+  const batchResult = await batchSendUSDC({
+      transfers, 
+      network,
+      tokenAddress: usdcTokenAddress,
+      wallet_data: walletData
+  });
+
+  // Update statuses
+  await PoolQueries.finalizeRewardDistribution({
+      pool_id: poolId,
+      invoice_id: invoiceId,
+      transaction_hash: batchResult.transactionHash
+  });
+
+  return {
+      transaction_hash: batchResult.transactionHash,
+      smart_account: smartAccountAddress,
+      rewards_distributed: transfers.length,
+      total_usdc: batchResult.totalAmount
+  };
+}
+
+async function batchSendUSDC({ transfers, network, tokenAddress, wallet_data }) {
+  if (!wallet_data?.encryptedData || !wallet_data?.iv) {
+      throw new Error('Invalid encrypted wallet data');
+  }
+
+  if (!Array.isArray(transfers) || transfers.length === 0) {
+      throw new Error('Transfers must be a non-empty array');
+  }
+
+  if (transfers.length > 100) {
+      throw new Error('Maximum 100 transfers allowed in a batch');
+  }
+
+  // Validate each transfer
+  for (const transfer of transfers) {
+      if (!ethers.isAddress(transfer.to)) {
+          throw new Error(`Invalid recipient address: ${transfer.to}`);
+      }
+      if (!transfer.amount || isNaN(transfer.amount)) {
+          throw new Error(`Invalid amount for recipient ${transfer.to}`);
+      }
+  }
+
+  const { signer, config } = getSigner_network(wallet_data, network);
+  const paymaster = await createPaymaster({
+      paymasterUrl: config.PAYMASTER_URL,
+      strictMode: true,
+  });
+
+  const biconomySmartAccount = await createSmartAccountClient({
+      signer,
+      paymaster,
+      bundlerUrl: config.BUNDLER_URL,
+  });
+
+  const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+  const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+  const usdcContract = new ethers.Contract(tokenAddress, USDC_ABI, provider);
+
+  const decimals = await usdcContract.decimals();
+  const balance = await usdcContract.balanceOf(smartAccountAddress);
+
+  let totalAmount = ethers.parseUnits('0', decimals);
+  const transactions = [];
+
+  for (const transfer of transfers) {
+      const amountInWei = ethers.parseUnits(transfer.amount.toString(), decimals);
+      totalAmount = totalAmount + amountInWei;
+
+      transactions.push({
+          to: tokenAddress,
+          data: usdcContract.interface.encodeFunctionData("transfer", [
+              transfer.to,
+              amountInWei
+          ])
+      });
+  }
+
+  if (balance < totalAmount) {
+      throw new Error('Insufficient USDC balance for batch transfer');
+  }
+
+  const txResponse = await biconomySmartAccount.sendTransaction(transactions, {
+      paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+  });
+
+  const { transactionHash } = await txResponse.waitForTxHash();
+  const txReceipt = await txResponse.wait();
+
+  if (txReceipt.success=='false') {
+      throw new Error('Batch transfer failed');
+  }
+
+  return {
+      transactionHash,
+      from: smartAccountAddress,
+      totalAmount: ethers.formatUnits(totalAmount, decimals),
+      transferCount: transfers.length,
+      receipt: txReceipt
+  };
 }
 // Webhook event handlers
 async function handleSetupIntentSucceeded(setupIntent) {
@@ -701,8 +859,181 @@ async updatePoolEmail(req, res) {
       });
   }
 }
+,
+async getPaidInvoices(req, res) {
+  try {
+      const { pool_id } = req.params;
+      const { limit = 10, page = 1 } = req.query;
 
+      if (!pool_id) {
+          return res.status(400).json({
+              success: false,
+              error: 'pool_id is required'
+          });
+      }
+
+      // Get paginated paid invoices
+      const { invoices, total } = await PoolQueries.getPaidInvoices({
+          pool_id,
+          limit: parseInt(limit),
+          offset: (parseInt(page) - 1) * parseInt(limit)
+      });
+
+      res.status(200).json({
+          success: true,
+          data: {
+              invoices: invoices.map(invoice => ({
+                  invoice_id: invoice.invoice_id,
+                  amount: invoice.amount,
+                  currency: invoice.currency,
+                  paid_at: invoice.paid_at,
+                  payment_intent_id: invoice.payment_intent_id,
+                  status: invoice.status,
+                  description: invoice.metadata?.description || null,
+                  invoice_url: invoice.metadata?.invoice_url || null
+              })),
+              pagination: {
+                  total,
+                  page: parseInt(page),
+                  limit: parseInt(limit),
+                  total_pages: Math.ceil(total / parseInt(limit))
+              }
+          }
+      });
+
+  } catch (error) {
+      console.error('Error fetching paid invoices:', error);
+      res.status(500).json({
+          success: false,
+          error: error.message
+      });
+  }
+}
+,
+async initializePoolRewards(req, res) {
+  try {
+      const { pool_id, invoice_id, rewards } = req.body;
+      /* 
+      rewards format: [
+          { smart_account_address: "0x123...", reward_percentage: 2.5 },
+          { smart_account_address: "0x456...", reward_percentage: 3.0 },
+          ...
+      ]
+      */
+
+      // Validate inputs
+      if (!pool_id || !invoice_id || !Array.isArray(rewards) || rewards.length === 0) {
+          return res.status(400).json({
+              success: false,
+              error: 'pool_id, invoice_id, and rewards array are required'
+          });
+      }
+
+      // Validate total percentage doesn't exceed 100%
+      const totalPercentage = rewards.reduce((sum, r) => sum + r.reward_percentage, 0);
+      if (totalPercentage > 100) {
+          return res.status(400).json({
+              success: false,
+              error: 'Total reward percentage cannot exceed 100%'
+          });
+      }
+
+      // Check if invoice exists and is valid
+      const invoice = await PoolQueries.getInvoiceDetails(invoice_id);
+      if (!invoice) {
+          return res.status(200).json({
+              success: false,
+              error: 'Invoice not found'
+          });
+      }
+
+      // Verify invoice belongs to pool
+      if (invoice.pool_id !== pool_id) {
+          return res.status(200).json({
+              success: false,
+              error: 'Invoice does not belong to this pool'
+          });
+      }
+
+      // Create reward entries
+      const createdRewards = await PoolQueries.createBulkRewards({
+          pool_id,
+          invoice_id,
+          invoice_amount: invoice.amount,
+          rewards,
+          metadata: {
+              invoice_currency: invoice.currency,
+              invoice_paid_at: invoice.paid_at,
+              payment_intent_id: invoice.payment_intent_id
+          }
+      });
+
+      res.status(200).json({
+          success: true,
+          data: {
+              invoice_id,
+              total_percentage: totalPercentage,
+              rewards: createdRewards.map(reward => ({
+                  reward_id: reward.id,
+                  smart_account_address: reward.smart_account_address,
+                  reward_percentage: reward.reward_percentage,
+                  calculated_reward: reward.calculated_reward,
+                  status: reward.status
+              }))
+          }
+      });
+
+  } catch (error) {
+      console.error('Error initializing rewards:', error);
+      res.status(500).json({
+          success: false,
+          error: error.message
+      });
+  }
+}
+,
+async  distributePoolRewards(req, res) {
+  try {
+      const { pool_id, invoice_id, usdc_token_address, network } = req.body;
+      const { wallet_data } = req.auth;
+
+      if (!wallet_data?.encryptedData || !wallet_data?.iv) {
+          return res.status(400).json({ error: 'Invalid wallet data' });
+      }
+
+      if (!ethers.isAddress(usdc_token_address)) {
+          return res.status(400).json({ error: 'Invalid USDC address' });
+      }
+      const distributionStatus = await PoolQueries.getDistributionStatus(pool_id, invoice_id);
+       if (distributionStatus.isDistributed) {
+           return res.status(200).json({
+               success: false,
+               error: 'Rewards already distributed',
+               data: {
+                   distribution_time: distributionStatus.distributed_at,
+                   transaction_hash: distributionStatus.blockchain_tx_id,
+                   smart_account_address: distributionStatus.smart_account_address,
+                   rewards: distributionStatus.rewards.map(r => ({
+                       smart_account: r.smart_account_address,
+                       percentage: r.reward_percentage,
+                       amount: r.calculated_reward_usdc
+                   }))
+               }
+           });
+       }
+
+      const result = await calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, network, usdc_token_address);
+
+      res.status(200).json({
+          success: true,
+          data: result
+      });
+
+  } catch (error) {
+      console.error('Reward distribution error:', error);
+      res.status(500).json({ success: false, error: error.message });
+  }
+}
 };
-
 
 
