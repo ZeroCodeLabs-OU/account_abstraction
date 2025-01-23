@@ -670,60 +670,60 @@ export const Payment_Controller = {
         });
     }
 },
-  async createAndChargeInvoice(req, res) {
-    try {
+async createAndChargeInvoice(req, res) {
+  try {
       const { amount, pool_id, description, currency } = req.body;
 
-      // Add amount validation
       if (!amount || amount <= 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid amount'
-        });
+          return res.status(400).json({
+              success: false,
+              error: 'Invalid amount'
+          });
       }
-
+      
       const poolInfo = await PoolQueries.getPoolInfo(pool_id);
       if (!poolInfo?.customer_id) {
-        return res.status(400).json({
-          success: false,
-          error: 'No customer found for this pool'
-        });
+          return res.status(400).json({
+              success: false,
+              error: 'No customer found for this pool'
+          });
       }
-      const customerId=poolInfo.customer_id;
-      console.log('Pool info:', poolInfo);
-      const defaultPaymentMethodId = await getDefaultPaymentMethod(customerId);
-      console.log('Default payment method:', defaultPaymentMethodId);
+
+      const defaultPaymentMethodId = await getDefaultPaymentMethod(poolInfo.customer_id);
       await clearPendingInvoiceItems(poolInfo.customer_id);
 
-      // Create invoice item with amount in cents
       const invoiceItem = await stripe.invoiceItems.create({
-        customer: poolInfo.customer_id,
-        amount: amount, // Convert to cents for Stripe
-        currency: currency,
-        description: description || 'Pool payment'
+          customer: poolInfo.customer_id,
+          amount: amount,
+          currency: currency,
+          description: description || 'Pool payment'
       });
-
-      console.log('Invoice item created:', invoiceItem); // Debug log
 
       const invoice = await stripe.invoices.create({
-        customer: customerId,
-        auto_advance: true,
-        collection_method: 'charge_automatically',
-        default_payment_method: defaultPaymentMethodId.id,
-        pending_invoice_items_behavior: 'include',
-        metadata: {
-          pool_id,
-          description
-        } 
+          customer: poolInfo.customer_id,
+          auto_advance: true,
+          collection_method: 'charge_automatically',
+          default_payment_method: defaultPaymentMethodId.id,
+          pending_invoice_items_behavior: 'include',
+          metadata: {
+              pool_id,
+              description
+          }
       });
 
-      console.log('Invoice created:', invoice); // Debug log
-
-      const paidInvoice = await stripe.invoices.pay(invoice.id, {
-        payment_method: defaultPaymentMethodId.id,
-      });
-      console.log('Paid invoice:', paidInvoice); // Debug log
-
+      let paidInvoice;
+      try {
+          paidInvoice = await stripe.invoices.pay(invoice.id, {
+              payment_method: defaultPaymentMethodId.id,
+          });
+      } catch (payError) {
+          return res.status(200).json({
+              success: false,
+              error: 'Payment failed',
+              details: payError.message,
+              invoice_id: invoice.id
+          });
+      }
       const mapStripeStatus = (stripeStatus) => {
         const statusMap = {
           'paid': 'succeeded',
@@ -733,66 +733,42 @@ export const Payment_Controller = {
         };
         return statusMap[stripeStatus] || 'pending';
       };
-      console.log('defaultPaymentMethodId:', defaultPaymentMethodId);
-      // Store the original amount in our database
       await PoolQueries.createInvoice({
-        invoice_id: paidInvoice.id,
-        pool_id,
-        amount: paidInvoice.amount_paid, 
-        currency: currency,
-        payment_method_id: defaultPaymentMethodId.id,
-        status: mapStripeStatus(paidInvoice.status),
-        payment_intent_id: paidInvoice.payment_intent,
-        paid_at: new Date(),
-        metadata: {
-          description,
-          payment_intent: paidInvoice.payment_intent,
-          invoice_url: paidInvoice.hosted_invoice_url,
-          stripe_amount: paidInvoice.amount_paid // Store Stripe amount for reference
-        }
-      });
-      // const charge = await stripe.charges.retrieve(paidInvoice.payment_intent, {
-      //   expand: ['balance_transaction']
-      // });
-
-      // await PoolQueries.createTransfer({
-      //   transaction_id: charge.balance_transaction.id,
-      //   payment_intent_id: paidInvoice.payment_intent,
-      //   invoice_id: paidInvoice.id,
-      //   pool_id: pool_id,
-      //   amount: paidInvoice.amount_paid,
-      //   currency: currency,
-      //   payment_datetime: new Date(),
-      //   status: 'active',
-      //   metadata: {
-      //     charge_id: charge.id,
-      //     payment_method: defaultPaymentMethodId.id,
-      //     balance_transaction: {
-      //       amount: charge.balance_transaction.amount,
-      //       fee: charge.balance_transaction.fee,
-      //       net: charge.balance_transaction.net,
-      //       available_on: charge.balance_transaction.available_on
-      //     }
-      //   }
-      // });
-      res.status(200).json({
-        success: true,
-        data: {
-          invoiceId: paidInvoice.id,
+          invoice_id: paidInvoice.id,
+          pool_id,
           amount: paidInvoice.amount_paid,
-          currency: paidInvoice.currency,
-          status: paidInvoice.status,
-          paidAt: new Date(paidInvoice.status_transitions.paid_at * 1000),
-          invoiceUrl: paidInvoice.hosted_invoice_url
-        }
+          currency: currency,
+          payment_method_id: defaultPaymentMethodId.id,
+          status: mapStripeStatus(paidInvoice.status),
+          payment_intent_id: paidInvoice.payment_intent,
+          paid_at: new Date(),
+          metadata: {
+              description,
+              payment_intent: paidInvoice.payment_intent,
+              invoice_url: paidInvoice.hosted_invoice_url,
+              stripe_amount: paidInvoice.amount_paid
+          }
       });
-    } catch (error) {
+
+      res.status(200).json({
+          success: true,
+          data: {
+              invoiceId: paidInvoice.id,
+              amount: paidInvoice.amount_paid,
+              currency: paidInvoice.currency,
+              status: paidInvoice.status,
+              paidAt: new Date(paidInvoice.status_transitions.paid_at * 1000),
+              invoiceUrl: paidInvoice.hosted_invoice_url
+          }
+      });
+
+  } catch (error) {
       console.error('Create and charge invoice error:', error);
       res.status(500).json({
-        success: false,
-        error: error.message
+          success: false,
+          error: error.message
       });
-    }
+  }
 },
 async updatePoolEmail(req, res) {
   try {
@@ -992,6 +968,55 @@ async initializePoolRewards(req, res) {
   }
 }
 ,
+async createSmartAccount  (req, res)  {
+  try {
+    const { wallet_data} = req.auth;
+    const { network } = req.body;
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
+      return res.status(400).json({ error: 'Invalid encrypted wallet data' });
+    }
+    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    }
+
+    // Get signer and configuration
+    const { signer, config } = getSigner_network(wallet_data, network);
+    // Setup Paymaster and other dependent services
+    const paymaster = await createPaymaster({
+      paymasterUrl: config.PAYMASTER_URL,
+      strictMode: true,
+    });
+
+    const biconomySmartAccount = await createSmartAccountClient({
+      signer,
+      paymaster,
+      bundlerUrl: config.BUNDLER_URL,
+    });
+
+    const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+    
+   
+    res.status(200).json({
+      walletAddress: signer.address,
+      smartAccountAddress:smartAccountAddress
+    });
+  } catch (error) {
+    console.error('Error creating smart account:', error);
+
+    // Handling unique constraint violation specifically
+    if (error.code === '23505' && error.detail.includes('wallet_address')) {
+      const walletAddressMatch = error.detail.match(/\=\(([^)]+)\)/);
+      const walletAddress = walletAddressMatch ? walletAddressMatch[1] : 'Unavailable';
+
+      return res.status(409).json({
+        error: 'A smart account with this wallet address already exists.',
+        wallet_address: walletAddress,
+      });
+    }
+
+    res.status(500).json({ error: 'Internal server error' });
+  }
+},
 async  distributePoolRewards(req, res) {
   try {
       const { pool_id, invoice_id, usdc_token_address, network } = req.body;
