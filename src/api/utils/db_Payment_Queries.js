@@ -261,6 +261,87 @@ export class PoolQueries {
       throw error;
     }
   }
+  static async getPendingRewardsForDistribution(poolId, invoiceId) {
+    const query = `
+        SELECT pr.*
+        FROM payment_system.pool_rewards pr
+        JOIN payment_system.transfers t ON pr.invoice_id = t.invoice_id
+        WHERE pr.pool_id = $1
+        AND pr.invoice_id = $2
+        AND pr.status = 'pending'
+        AND t.treasury_withdrawn = true
+        AND t.user_distributed = false;
+    `;
+
+    const result = await pool.query(query, [poolId, invoiceId]);
+    return result.rows;
+}
+static async finalizeRewardDistribution({ pool_id, invoice_id, transaction_hash }) {
+  const client = await pool.connect();
+  try {
+      await client.query('BEGIN');
+
+      // Update rewards
+      await client.query(`
+          UPDATE payment_system.pool_rewards
+          SET 
+              status = 'succeeded',
+              blockchain_tx_id = $1,
+              distributed_at = CURRENT_TIMESTAMP
+          WHERE pool_id = $2 
+          AND invoice_id = $3
+          AND status = 'processing';
+      `, [transaction_hash, pool_id, invoice_id]);
+
+      // Update transfer
+      await client.query(`
+          UPDATE payment_system.transfers
+          SET 
+              user_distributed = true,
+              user_distributed_at = CURRENT_TIMESTAMP
+          WHERE pool_id = $1 
+          AND invoice_id = $2;
+      `, [pool_id, invoice_id]);
+
+      
+
+      await client.query('COMMIT');
+  } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+  } finally {
+      client.release();
+  }
+}
+
+
+
+static async updateRewardsWithUsdcAmounts(rewards) {
+  const client = await pool.connect();
+  try {
+      await client.query('BEGIN');
+
+      for (const reward of rewards) {
+          await client.query(`
+              UPDATE payment_system.pool_rewards
+              SET 
+                  usdc_base_amount = $1,
+                  calculated_reward_usdc = $2,
+                  status = 'processing',
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE id = $3
+          `, [reward.usdc_base_amount, reward.calculated_reward_usdc, reward.id]);
+      }
+
+      await client.query('COMMIT');
+  } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+  } finally {
+      client.release();
+  }
+}
+
 
   static async getCustomerIdByPoolId(poolId) {
     const query = `
@@ -389,5 +470,114 @@ export class PoolQueries {
     } finally {
         client.release();
     }
+}
+
+static async getInvoiceDetails(invoiceId) {
+  const query = `
+      SELECT * FROM payment_system.invoices 
+      WHERE invoice_id = $1 
+      AND status = 'succeeded';
+  `;
+  
+  try {
+      const result = await pool.query(query, [invoiceId]);
+      return result.rows[0];
+  } catch (error) {
+      console.error('Error fetching invoice:', error);
+      throw error;
+  }
+}
+
+static async getRewardByInvoiceId(invoiceId) {
+  const query = `
+      SELECT * FROM payment_system.pool_rewards 
+      WHERE invoice_id = $1;
+  `;
+  
+  try {
+      const result = await pool.query(query, [invoiceId]);
+      return result.rows[0];
+  } catch (error) {
+      console.error('Error fetching reward:', error);
+      throw error;
+  }
+}
+static async createBulkRewards({ pool_id, invoice_id, invoice_amount, rewards, metadata }) {
+  const client = await pool.connect();
+  try {
+      await client.query('BEGIN');
+
+      const createdRewards = [];
+      for (const reward of rewards) {
+          const calculatedReward = (parseFloat(invoice_amount) * reward.reward_percentage) / 100;
+          
+          const query = `
+              INSERT INTO payment_system.pool_rewards
+              (pool_id, invoice_id, smart_account_address, reward_percentage, 
+               base_amount, calculated_reward, metadata)
+              VALUES ($1, $2, $3, $4, $5, $6, $7)
+              RETURNING *;
+          `;
+
+          const result = await client.query(query, [
+              pool_id,
+              invoice_id,
+              reward.smart_account_address,
+              reward.reward_percentage,
+              invoice_amount,
+              calculatedReward,
+              metadata
+          ]);
+
+          createdRewards.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return createdRewards;
+  } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+  } finally {
+      client.release();
+  }
+}
+
+static async getPaidInvoices({ pool_id, limit, offset }) {
+  const client = await pool.connect();
+  try {
+      // Get paginated invoices
+      const invoicesQuery = `
+          SELECT *
+          FROM payment_system.invoices 
+          WHERE pool_id = $1 
+          AND status = 'succeeded'
+          ORDER BY paid_at DESC
+          LIMIT $2 OFFSET $3;
+      `;
+
+      // Get total count
+      const countQuery = `
+          SELECT COUNT(*) 
+          FROM payment_system.invoices 
+          WHERE pool_id = $1 
+          AND status = 'succeeded';
+      `;
+
+      const [invoicesResult, countResult] = await Promise.all([
+          client.query(invoicesQuery, [pool_id, limit, offset]),
+          client.query(countQuery, [pool_id])
+      ]);
+
+      return {
+          invoices: invoicesResult.rows,
+          total: parseInt(countResult.rows[0].count)
+      };
+
+  } catch (error) {
+      console.error('Error in getPaidInvoices:', error);
+      throw error;
+  } finally {
+      client.release();
+  }
 }
 }

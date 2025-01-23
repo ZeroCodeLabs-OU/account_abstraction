@@ -133,6 +133,9 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
   app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.put('/pools/update-email',authenticateToken, Payment_Controller.updatePoolEmail);
+  app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
+  app.post('/pools/rewards/initialize',authenticateToken, Payment_Controller.initializePoolRewards);
+  app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
 
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
