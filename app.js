@@ -140,7 +140,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc', Payment_Controller.calculateRewardUSDCAmount);
-  app.get('/invoices/pending-treasury', paymentController.getInvoicesPendingTreasury);
+  app.get('/invoices/pending-treasury', Payment_Controller.getInvoicesPendingTreasury);
 
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
