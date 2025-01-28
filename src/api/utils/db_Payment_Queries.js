@@ -14,6 +14,32 @@ export class PoolQueries {
     }
   }
 
+  static async getInvoicesWithPayoutPendingTreasury() {
+    const query = `
+        SELECT 
+            i.*,
+            t.payout_id,
+            t.transaction_id,
+            t.settlement_datetime,
+            t.treasury_withdrawn,
+            t.treasury_withdrawn_at
+        FROM payment_system.invoices i
+        JOIN payment_system.transfers t ON i.invoice_id = t.invoice_id
+        WHERE t.payout_id IS NOT NULL 
+        AND t.settlement_datetime IS NOT NULL
+        AND t.treasury_withdrawn = false
+        ORDER BY t.settlement_datetime DESC;
+    `;
+
+    try {
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error fetching invoices pending treasury:', error);
+        throw error;
+    }
+}
+
   static async createOrUpdatePool(data) {
     const client = await pool.connect();
     try {
@@ -502,14 +528,15 @@ static async getRewardByInvoiceId(invoiceId) {
       throw error;
   }
 }
-static async createBulkRewards({ pool_id, invoice_id, invoice_amount, rewards, metadata }) {
+static async createBulkRewards({ pool_id, invoice_id, invoice_amount, distribution_amount, rewards, metadata }) {
   const client = await pool.connect();
   try {
       await client.query('BEGIN');
 
       const createdRewards = [];
       for (const reward of rewards) {
-          const calculatedReward = (parseFloat(invoice_amount) * reward.reward_percentage) / 100;
+          // Calculate reward based on distribution_amount (90% of original)
+          const calculatedReward = (distribution_amount * reward.reward_percentage) / 100;
           
           const query = `
               INSERT INTO payment_system.pool_rewards
@@ -524,9 +551,17 @@ static async createBulkRewards({ pool_id, invoice_id, invoice_amount, rewards, m
               invoice_id,
               reward.smart_account_address,
               reward.reward_percentage,
-              invoice_amount,
+              invoice_amount, // Store original amount
               calculatedReward,
-              metadata
+              {
+                  ...metadata,
+                  reward_calculation: {
+                      original_amount: invoice_amount,
+                      distribution_amount: distribution_amount,
+                      percentage: reward.reward_percentage,
+                      calculated_reward: calculatedReward
+                  }
+              }
           ]);
 
           createdRewards.push(result.rows[0]);
@@ -542,6 +577,24 @@ static async createBulkRewards({ pool_id, invoice_id, invoice_amount, rewards, m
   }
 }
 
+static async getRewardsForInvoice(poolId, invoiceId) {
+  const query = `
+      SELECT 
+          pr.*,
+          i.currency as invoice_currency
+      FROM payment_system.pool_rewards pr
+      JOIN payment_system.invoices i ON pr.invoice_id = i.invoice_id
+      WHERE pr.pool_id = $1 
+      AND pr.invoice_id = $2;
+  `;
+
+  try {
+      const result = await pool.query(query, [poolId, invoiceId]);
+      return result.rows;
+  } catch (error) {
+      throw error;
+  }
+}
 static async getPaidInvoices({ pool_id, limit, offset }) {
   const client = await pool.connect();
   try {

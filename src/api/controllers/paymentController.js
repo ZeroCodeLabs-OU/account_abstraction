@@ -3,7 +3,7 @@ import { PoolQueries } from '../utils/db_Payment_Queries.js';
 import { getSigner, getSigner_network } from '../services/biconomyService.js';
 import { createSmartAccountClient, createPaymaster } from '@biconomy/account';
 import { ethers } from 'ethers';
-
+import axios from 'axios';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
@@ -29,7 +29,27 @@ async function retryOperation(operation, maxRetries = MAX_RETRIES) {
   
   throw lastError;
 }
+async function getUSDCExchangeRate(currency) {
+  try {
+      const response = await axios.get(
+          `https://api.coingecko.com/api/v3/simple/price`, {
+              params: {
+                  ids: 'usd-coin',
+                  vs_currencies: currency
+              }
+          }
+      );
 
+      if (!response.data['usd-coin'] || !response.data['usd-coin'][currency]) {
+          throw new Error(`Unable to get USDC rate for ${currency}`);
+      }
+
+      // Return the inverse rate since we want currency -> USDC
+      return 1 / response.data['usd-coin'][currency];
+  } catch (error) {
+      throw new Error(`Failed to fetch USDC exchange rate: ${error.message}`);
+  }
+}
 async function handlePaymentIntentSucceeded(paymentIntent) {
   try {
     console.log('Processing payment intent:', paymentIntent);
@@ -680,7 +700,7 @@ async createAndChargeInvoice(req, res) {
               error: 'Invalid amount'
           });
       }
-      
+
       const poolInfo = await PoolQueries.getPoolInfo(pool_id);
       if (!poolInfo?.customer_id) {
           return res.status(400).json({
@@ -692,16 +712,31 @@ async createAndChargeInvoice(req, res) {
       const defaultPaymentMethodId = await getDefaultPaymentMethod(poolInfo.customer_id);
       await clearPendingInvoiceItems(poolInfo.customer_id);
 
+      // First create invoice item
       const invoiceItem = await stripe.invoiceItems.create({
           customer: poolInfo.customer_id,
           amount: amount,
           currency: currency,
           description: description || 'Pool payment'
       });
+      console.log('Created invoice item:', {
+        id: invoiceItem.id,
+        amount: invoiceItem.amount,
+        currency: invoiceItem.currency
+    });
+      // Verify invoice item was created with correct amount
+      if (!invoiceItem || invoiceItem.amount <= 0) {
+          return res.status(200).json({
+              success: false,
+              error: 'Failed to create invoice item with correct amount'
+          });
+      }
 
+      // Create invoice with items
       const invoice = await stripe.invoices.create({
           customer: poolInfo.customer_id,
-          auto_advance: true,
+          auto_advance: false, // Change to false
+          currency: currency.toLowerCase(),
           collection_method: 'charge_automatically',
           default_payment_method: defaultPaymentMethodId.id,
           pending_invoice_items_behavior: 'include',
@@ -711,28 +746,47 @@ async createAndChargeInvoice(req, res) {
           }
       });
 
-      let paidInvoice;
-      try {
-          paidInvoice = await stripe.invoices.pay(invoice.id, {
-              payment_method: defaultPaymentMethodId.id,
-          });
-      } catch (payError) {
+      console.log('Created invoice:', {
+        id: invoice.id,
+        amount_due: invoice.amount_due,
+        currency: invoice.currency,
+        items_count: invoice.lines.data.length
+    });
+
+      // Finalize invoice to ensure all amounts are calculated
+      const finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id);
+
+      // Verify invoice amount before payment
+      if (finalizedInvoice.amount_due <= 0) {
           return res.status(200).json({
               success: false,
-              error: 'Payment failed',
-              details: payError.message,
-              invoice_id: invoice.id
+              error: 'Invoice amount is zero'
+          });
+      }
+
+      // Pay the invoice
+      const paidInvoice = await stripe.invoices.pay(finalizedInvoice.id, {
+          payment_method: defaultPaymentMethodId.id,
+      });
+
+      // Verify payment intent exists
+      if (!paidInvoice.payment_intent) {
+          return res.status(200).json({
+              success: false,
+              error: 'Payment successful but no payment intent created',
+              invoice_id: paidInvoice.id
           });
       }
       const mapStripeStatus = (stripeStatus) => {
         const statusMap = {
-          'paid': 'succeeded',
-          'unpaid': 'pending',
-          'uncollectible': 'failed',
-          'void': 'cancelled',
+            'paid': 'succeeded',
+            'unpaid': 'pending',
+            'uncollectible': 'failed',
+            'void': 'cancelled',
         };
         return statusMap[stripeStatus] || 'pending';
-      };
+    };
+      // Continue with database insertion...
       await PoolQueries.createInvoice({
           invoice_id: paidInvoice.id,
           pool_id,
@@ -744,7 +798,6 @@ async createAndChargeInvoice(req, res) {
           paid_at: new Date(),
           metadata: {
               description,
-              payment_intent: paidInvoice.payment_intent,
               invoice_url: paidInvoice.hosted_invoice_url,
               stripe_amount: paidInvoice.amount_paid
           }
@@ -757,6 +810,7 @@ async createAndChargeInvoice(req, res) {
               amount: paidInvoice.amount_paid,
               currency: paidInvoice.currency,
               status: paidInvoice.status,
+              payment_intent: paidInvoice.payment_intent,
               paidAt: new Date(paidInvoice.status_transitions.paid_at * 1000),
               invoiceUrl: paidInvoice.hosted_invoice_url
           }
@@ -889,15 +943,8 @@ async getPaidInvoices(req, res) {
 async initializePoolRewards(req, res) {
   try {
       const { pool_id, invoice_id, rewards } = req.body;
-      /* 
-      rewards format: [
-          { smart_account_address: "0x123...", reward_percentage: 2.5 },
-          { smart_account_address: "0x456...", reward_percentage: 3.0 },
-          ...
-      ]
-      */
 
-      // Validate inputs
+      // Basic validations
       if (!pool_id || !invoice_id || !Array.isArray(rewards) || rewards.length === 0) {
           return res.status(400).json({
               success: false,
@@ -907,10 +954,10 @@ async initializePoolRewards(req, res) {
 
       // Validate total percentage doesn't exceed 100%
       const totalPercentage = rewards.reduce((sum, r) => sum + r.reward_percentage, 0);
-      if (totalPercentage > 100) {
+      if (Math.abs(totalPercentage - 100) > 0.01) { // Using 0.01 for floating point comparison
           return res.status(400).json({
               success: false,
-              error: 'Total reward percentage cannot exceed 100%'
+              error: `Total reward percentage must equal exactly 100% current total percentage ${totalPercentage}`
           });
       }
 
@@ -931,16 +978,26 @@ async initializePoolRewards(req, res) {
           });
       }
 
-      // Create reward entries
+      // Calculate base amount after 10% reduction
+      const platformFeePercentage = 10;
+      const baseAmount = invoice.amount;
+      const platformFee = (baseAmount * platformFeePercentage) / 100;
+      const distributionAmount = baseAmount - platformFee;
+
+      // Create reward entries with adjusted calculations
       const createdRewards = await PoolQueries.createBulkRewards({
           pool_id,
           invoice_id,
-          invoice_amount: invoice.amount,
+          invoice_amount: baseAmount,
+          distribution_amount: distributionAmount,
           rewards,
           metadata: {
               invoice_currency: invoice.currency,
               invoice_paid_at: invoice.paid_at,
-              payment_intent_id: invoice.payment_intent_id
+              payment_intent_id: invoice.payment_intent_id,
+              platform_fee_percentage: platformFeePercentage,
+              platform_fee_amount: platformFee,
+              distribution_amount: distributionAmount
           }
       });
 
@@ -948,6 +1005,9 @@ async initializePoolRewards(req, res) {
           success: true,
           data: {
               invoice_id,
+              base_amount: baseAmount,
+              platform_fee: platformFee,
+              distribution_amount: distributionAmount,
               total_percentage: totalPercentage,
               rewards: createdRewards.map(reward => ({
                   reward_id: reward.id,
@@ -1057,6 +1117,117 @@ async  distributePoolRewards(req, res) {
   } catch (error) {
       console.error('Reward distribution error:', error);
       res.status(500).json({ success: false, error: error.message });
+  }
+},
+async calculateRewardUSDCAmount(req, res) {
+  try {
+      const { pool_id, invoice_id } = req.params;
+      const USDC_DECIMALS = 6;
+
+      const rewards = await PoolQueries.getRewardsForInvoice(pool_id, invoice_id);
+      if (!rewards?.length) {
+          return res.status(200).json({
+              success: false,
+              error: 'No rewards found for this invoice'
+          });
+      }
+
+      const currency = rewards[0].metadata.invoice_currency.toLowerCase();
+      
+      // Convert from smallest unit to standard unit for all currencies
+      const convertToStandardUnit = (amount) => amount / 100;
+
+      if (currency === 'usdc') {
+          const totalAmount = rewards.reduce((sum, r) => {
+              const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+              return sum + actualAmount;
+          }, 0);
+          
+          const formattedTotal = Number(totalAmount.toFixed(USDC_DECIMALS));
+          
+          return res.status(200).json({
+              success: true,
+              data: {
+                  total_reward_amount: formattedTotal,
+                  currency: 'USDC',
+                  exchange_rate: 1,
+                  exchange_rate_date: new Date(),
+                  usdc_amount: formattedTotal
+              }
+          });
+      }
+
+      const exchangeRate = await getUSDCExchangeRate(currency);
+      const totalRewardAmount = rewards.reduce((sum, r) => {
+          const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+          return sum + actualAmount;
+      }, 0);
+
+      const usdcAmount = Number((totalRewardAmount * exchangeRate).toFixed(USDC_DECIMALS));
+
+      const formattedRewards = rewards.map(r => {
+          const actualRewardAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+          const rewardUsdcAmount = Number((actualRewardAmount * exchangeRate).toFixed(USDC_DECIMALS));
+          return {
+              smart_account_address: r.smart_account_address,
+              reward_percentage: r.reward_percentage,
+              reward_amount: actualRewardAmount,
+              usdc_amount: rewardUsdcAmount
+          };
+      });
+
+      res.status(200).json({
+          success: true,
+          data: {
+              total_reward_amount: totalRewardAmount,
+              currency: currency.toUpperCase(),
+              exchange_rate: exchangeRate,
+              exchange_rate_date: new Date(),
+              usdc_amount: usdcAmount,
+              rewards: formattedRewards
+          }
+      });
+
+  } catch (error) {
+      console.error('Error calculating USDC amount:', error);
+      res.status(500).json({
+          success: false,
+          error: error.message
+      });
+  }
+},
+async getInvoicesPendingTreasury(req, res) {
+  try {
+      const invoices = await PoolQueries.getInvoicesWithPayoutPendingTreasury();
+
+      if (!invoices || invoices.length === 0) {
+          return res.status(200).json({
+              success: false,
+              message: 'No invoices found pending treasury withdrawal'
+          });
+      }
+
+      res.status(200).json({
+          success: true,
+          data: {
+              invoices: invoices.map(invoice => ({
+                  invoice_id: invoice.invoice_id,
+                  pool_id: invoice.pool_id,
+                  amount: invoice.amount,
+                  currency: invoice.currency,
+                  payout_id: invoice.payout_id,
+                  payout_date: invoice.settlement_datetime,
+                  transaction_id: invoice.transaction_id
+              }))
+          }
+      });
+
+  } catch (error) {
+      console.error('Error fetching invoices pending treasury:', error);
+      res.status(500).json({
+          success: false,
+          error: error.message
+      });
   }
 }
 };
