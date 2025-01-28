@@ -136,7 +136,12 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
   app.post('/pools/rewards/initialize',authenticateToken, Payment_Controller.initializePoolRewards);
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
-  app.post('/get-smart-acount',authenticateToken, Payment_Controller.createSmartAccount);
+  app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
+
+
+  app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc', Payment_Controller.calculateRewardUSDCAmount);
+  app.get('/invoices/pending-treasury', paymentController.getInvoicesPendingTreasury);
+
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
@@ -146,7 +151,6 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
-
 
 
 
