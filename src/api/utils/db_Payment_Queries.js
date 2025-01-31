@@ -527,6 +527,7 @@ static async getPendingRewards_pool(poolId, invoiceId) {
       ORDER BY pr.created_at ASC;
   `;
 
+
   try {
       const result = await pool.query(query, [poolId, invoiceId]);
       return result.rows;
@@ -534,6 +535,38 @@ static async getPendingRewards_pool(poolId, invoiceId) {
       throw error;
   }
 }
+
+static async getPendingRewards_user(poolId, invoiceId) {
+  const query = `
+      SELECT 
+          pr.*,
+          i.currency,
+          t.treasury_withdrawn,
+          t.user_distributed,
+          p.smart_account_address as pool_smart_account
+      FROM payment_system.pool_rewards pr
+      JOIN payment_system.invoices i ON i.invoice_id = pr.invoice_id
+      JOIN payment_system.transfers t ON t.invoice_id = pr.invoice_id
+      JOIN payment_system.pools p ON p.pool_id = pr.pool_id
+      WHERE pr.pool_id = $1 
+      AND pr.invoice_id = $2
+      AND pr.status IN ('pending', 'processing')
+      AND t.treasury_withdrawn = true
+      AND t.user_distributed = false
+      AND pr.calculated_reward_usdc IS NOT NULL
+      AND p.smart_account_address IS NOT NULL
+      ORDER BY pr.created_at ASC;
+  `;
+
+
+  try {
+      const result = await pool.query(query, [poolId, invoiceId]);
+      return result.rows;
+  } catch (error) {
+      throw error;
+  }
+}
+
 
 static async getPendingRewards(pool_id, invoice_id) {
   const query = `

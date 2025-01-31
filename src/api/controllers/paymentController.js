@@ -180,7 +180,9 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
         if (!acc[reward.smart_account_address]) {
             acc[reward.smart_account_address] = BigInt(0);
         }
-    
+        
+        console.log('Processing reward:', reward);
+        
         const amountE8 = ethers.parseUnits(reward.calculated_reward_usdc, DB_DECIMALS); 
         const amountE18 = amountE8 * CONVERSION_FACTOR; // Convert to 18 decimals
         acc[reward.smart_account_address] += amountE18;
@@ -1111,6 +1113,14 @@ async  distributePoolRewards(req, res) {
 
   try {
       // Get pending rewards
+      const rewards = await PoolQueries.getPendingRewards_user(pool_id, invoice_id);
+      if (!rewards?.length) {
+          return res.status(200).json({
+              success: false,
+              error: 'No pending rewards found getPendingRewards_user'
+          });
+      }
+
       const pendingRewards = await PoolQueries.getPendingRewards(pool_id, invoice_id);
       
       if (!pendingRewards || pendingRewards.length === 0) {
@@ -1408,7 +1418,7 @@ async processAndDistributeRewards(req, res) {
               const withdrawResults = [];
               for (const reward of consolidatedRewards) {
                   console.log('Processing withdrawal for:', reward.address);
-
+                  
                   const withdrawData = new ethers.Interface(distributorABI)
                       .encodeFunctionData("withdrawTokens", [reward.address]);
 
