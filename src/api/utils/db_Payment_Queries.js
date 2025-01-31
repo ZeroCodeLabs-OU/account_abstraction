@@ -14,6 +14,80 @@ export class PoolQueries {
     }
   }
 
+  static async getDistributionStatus(pool_id, invoice_id) {
+    const query = `
+        SELECT 
+            i.invoice_id,
+            i.pool_id,
+            i.amount,
+            i.currency,
+            i.status as invoice_status,
+            p.smart_account_address as pool_smart_account,
+            COALESCE(
+                bool_or(pr.status = 'succeeded'),
+                false
+            ) as is_distributed,
+            MAX(pr.distributed_at) as distributed_at,
+            MAX(pr.blockchain_tx_id) as blockchain_tx_id,
+            COALESCE(
+                json_agg(
+                    json_build_object(
+                        'smart_account_address', pr.smart_account_address,
+                        'reward_percentage', pr.reward_percentage,
+                        'calculated_reward_usdc', pr.calculated_reward_usdc
+                    )
+                ) FILTER (WHERE pr.smart_account_address IS NOT NULL),
+                '[]'
+            ) as rewards
+        FROM payment_system.invoices i
+        JOIN payment_system.pools p ON p.pool_id = i.pool_id
+        LEFT JOIN payment_system.pool_rewards pr ON pr.invoice_id = i.invoice_id
+        WHERE i.pool_id = $1 
+        AND i.invoice_id = $2
+        GROUP BY 
+            i.invoice_id,
+            i.pool_id,
+            i.amount,
+            i.currency,
+            i.status,
+            p.smart_account_address;
+    `;
+
+    try {
+        const result = await pool.query(query, [pool_id, invoice_id]);
+        
+        // If no record found
+        if (result.rows.length === 0) {
+            return {
+                isDistributed: false,
+                distributed_at: null,
+                blockchain_tx_id: null,
+                rewards: [],
+                pool_smart_account: null
+            };
+        }
+
+        const row = result.rows[0];
+        return {
+            isDistributed: row.is_distributed,
+            distributed_at: row.distributed_at,
+            blockchain_tx_id: row.blockchain_tx_id,
+            rewards: row.rewards || [],
+            pool_smart_account: row.pool_smart_account,
+            invoice: {
+                invoice_id: row.invoice_id,
+                pool_id: row.pool_id,
+                amount: row.amount,
+                currency: row.currency,
+                status: row.invoice_status
+            }
+        };
+    } catch (error) {
+        console.error('Error getting distribution status:', error);
+        throw error;
+    }
+}
+
   static async getInvoicesWithPayoutPendingTreasury() {
     const query = `
         SELECT 
@@ -302,38 +376,236 @@ export class PoolQueries {
     const result = await pool.query(query, [poolId, invoiceId]);
     return result.rows;
 }
-static async finalizeRewardDistribution({ pool_id, invoice_id, transaction_hash }) {
+
+static async updateRewardsWithUSDC({ pool_id, invoice_id, exchange_rate, exchange_rate_date, rewards }) {
   const client = await pool.connect();
   try {
       await client.query('BEGIN');
 
-      // Update rewards
-      await client.query(`
-          UPDATE payment_system.pool_rewards
-          SET 
-              status = 'succeeded',
-              blockchain_tx_id = $1,
-              distributed_at = CURRENT_TIMESTAMP
-          WHERE pool_id = $2 
-          AND invoice_id = $3
-          AND status = 'processing';
-      `, [transaction_hash, pool_id, invoice_id]);
-
-      // Update transfer
-      await client.query(`
-          UPDATE payment_system.transfers
-          SET 
-              user_distributed = true,
-              user_distributed_at = CURRENT_TIMESTAMP
-          WHERE pool_id = $1 
-          AND invoice_id = $2;
-      `, [pool_id, invoice_id]);
-
-      
+      for (const reward of rewards) {
+          await client.query(`
+              UPDATE payment_system.pool_rewards
+              SET 
+                  calculated_reward_usdc = $1,
+                  usdc_exchange_rate = $2,
+                  usdc_exchange_rate_date = $3,
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE id = $4
+              AND pool_id = $5
+              AND invoice_id = $6
+          `, [
+              reward.calculated_reward_usdc,
+              exchange_rate,
+              exchange_rate_date,
+              reward.id,
+              pool_id,
+              invoice_id
+          ]);
+      }
 
       await client.query('COMMIT');
   } catch (error) {
       await client.query('ROLLBACK');
+      throw error;
+  } finally {
+      client.release();
+  }
+}
+
+static async getPendingRewardsWithoutUSDC(poolId, invoiceId) {
+  const query = `
+      SELECT 
+          pr.*,
+          i.currency,
+          t.treasury_withdrawn,
+          t.user_distributed,
+          p.smart_account_address as pool_smart_account
+      FROM payment_system.pool_rewards pr
+      JOIN payment_system.invoices i ON i.invoice_id = pr.invoice_id
+      JOIN payment_system.transfers t ON t.invoice_id = pr.invoice_id
+      JOIN payment_system.pools p ON p.pool_id = pr.pool_id
+      WHERE pr.pool_id = $1 
+      AND pr.invoice_id = $2
+      AND pr.status = 'pending'
+      AND t.treasury_withdrawn = false
+      AND t.user_distributed = false
+      AND p.smart_account_address IS NOT NULL
+      ORDER BY pr.created_at ASC;
+  `;
+
+  try {
+      const result = await pool.query(query, [poolId, invoiceId]);
+      return result.rows;
+  } catch (error) {
+      throw error;
+  }
+}
+
+
+
+
+static async updateDistributionStatus({ pool_id, invoice_id, transaction_hash, status }) {
+  const client = await pool.connect();
+  try {
+      await client.query('BEGIN');
+
+      // Update rewards status
+     
+
+      // Update transfer status
+      const updateTransferQuery = `
+          UPDATE payment_system.transfers
+          SET 
+              treasury_withdrawn = true,
+              treasury_withdrawn_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE pool_id = $1 
+          AND invoice_id = $2
+          RETURNING *;
+      `;
+
+      await client.query(updateTransferQuery, [pool_id, invoice_id]);
+
+      
+
+      await client.query('COMMIT');
+      return updateTransferQuery;
+      
+
+  } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error updating distribution status:', error);
+      throw error;
+  } finally {
+      client.release();
+  }
+}
+static async updateRewardsToProcessing(pool_id, invoice_id) {
+  const query = `
+      UPDATE payment_system.pool_rewards
+      SET 
+          status = 'processing',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE pool_id = $1 
+      AND invoice_id = $2
+      AND status = 'pending';
+  `;
+  await pool.query(query, [pool_id, invoice_id]);
+}
+
+static async revertProcessingStatus(pool_id, invoice_id) {
+  const query = `
+      UPDATE payment_system.pool_rewards
+      SET 
+          status = 'pending',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE pool_id = $1 
+      AND invoice_id = $2
+      AND status = 'processing';
+  `;
+  await pool.query(query, [pool_id, invoice_id]);
+}
+static async getPendingRewards_pool(poolId, invoiceId) {
+  const query = `
+      SELECT 
+          pr.*,
+          i.currency,
+          t.treasury_withdrawn,
+          t.user_distributed,
+          p.smart_account_address as pool_smart_account
+      FROM payment_system.pool_rewards pr
+      JOIN payment_system.invoices i ON i.invoice_id = pr.invoice_id
+      JOIN payment_system.transfers t ON t.invoice_id = pr.invoice_id
+      JOIN payment_system.pools p ON p.pool_id = pr.pool_id
+      WHERE pr.pool_id = $1 
+      AND pr.invoice_id = $2
+      AND pr.status IN ('pending', 'processing')
+      AND t.treasury_withdrawn = false
+      AND t.user_distributed = false
+      AND pr.calculated_reward_usdc IS NOT NULL
+      AND p.smart_account_address IS NOT NULL
+      ORDER BY pr.created_at ASC;
+  `;
+
+  try {
+      const result = await pool.query(query, [poolId, invoiceId]);
+      return result.rows;
+  } catch (error) {
+      throw error;
+  }
+}
+
+static async getPendingRewards(pool_id, invoice_id) {
+  const query = `
+      SELECT *
+      FROM payment_system.pool_rewards
+      WHERE pool_id = $1 
+      AND invoice_id = $2
+      AND status IN ('pending', 'processing')
+  `;
+  const result = await pool.query(query, [pool_id, invoice_id]);
+  // console.log('Pending rewards:', result);
+  return result.rows;
+}
+static async finalizeRewardDistribution( transaction_hash,pool_id, invoice_id ) {
+  const client = await pool.connect();
+  console.log('Starting reward distribution finalization:', {
+      pool_id,
+      invoice_id,
+      transaction_hash
+  });
+
+  try {
+      await client.query('BEGIN');
+
+      // Update rewards with detailed status
+      const rewardResult = await client.query(`
+        UPDATE payment_system.pool_rewards
+        SET 
+            status = 'succeeded',
+            blockchain_tx_id = $1::text,
+            distributed_at = CURRENT_TIMESTAMP
+        WHERE pool_id = $2::text 
+        AND invoice_id = $3::text
+        AND status = 'processing';
+    `, [transaction_hash, pool_id, invoice_id]);
+
+      console.log(`Updated ${rewardResult.rowCount} rewards to succeeded status`);
+
+      // Update transfer status with timestamps
+      const transferResult = await client.query(`
+          UPDATE payment_system.transfers
+          SET 
+              treasury_withdrawn = true,
+              treasury_withdrawn_at = CURRENT_TIMESTAMP,
+              user_distributed = true,
+              user_distributed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE pool_id = $1 
+          AND invoice_id = $2
+          RETURNING transaction_id, amount;
+      `, [pool_id, invoice_id]);
+
+      console.log(`Updated transfer status for ${transferResult.rowCount} records`);
+
+      
+
+      await client.query('COMMIT');
+
+      return {
+          success: true,
+          updated_rewards: rewardResult.rows,
+          transfer_details: transferResult.rows[0],
+          timestamp: new Date()
+      };
+
+  } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error in finalizeRewardDistribution:', {
+          error: error.message,
+          pool_id,
+          invoice_id
+      });
       throw error;
   } finally {
       client.release();

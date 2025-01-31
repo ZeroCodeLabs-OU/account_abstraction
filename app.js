@@ -82,7 +82,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
   // get erc20 balance
-  app.get('/get-erc20-balance', authenticateToken, getERC20Balance);
+  app.post('/get-erc20-balance', authenticateToken, getERC20Balance);
   // withdraw usdc
   app.post('/withdraw-usdc', authenticateToken, withdrawUSDC);
   // deposit to pool
@@ -139,9 +139,9 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
 
 
-  app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc', Payment_Controller.calculateRewardUSDCAmount);
-  app.get('/invoices/pending-treasury', Payment_Controller.getInvoicesPendingTreasury);
-
+  app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
+  app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
+  app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
@@ -158,3 +158,13 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
 
+//change the way we distribute from pool to user look into pool rewards table and get the amount to distribute 
+//get the amount of usdc that needs to be distributed do the checks and then distribute it to the user
+//update the pool rewards table with the amount distributed and update associated invoice and pool_id reward table 
+
+//deploy the new contract on testnet look into the contract controller and deploy the contract on testnet
+// deploy usdt for testing 
+// create a endpoint where first we get exchange rate and multiple it with all the included pools and then set it in the table 
+// and calculate it and store it in calcuated reward with that exchange rate  for that pool
+// and then do check if the required usdc amount is greateer or equal to the total amount of usdc in contract then set the bulk setBulkWithdrawalAllowances and then check if usdc allowance is greater than or equal to do it and then do the distributino from contract to the pool smart address
+// and then set the distribution status to true in db 

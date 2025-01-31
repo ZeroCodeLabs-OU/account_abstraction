@@ -1,13 +1,23 @@
 import Stripe from 'stripe';
 import { PoolQueries } from '../utils/db_Payment_Queries.js';
 import { getSigner, getSigner_network } from '../services/biconomyService.js';
-import { createSmartAccountClient, createPaymaster } from '@biconomy/account';
+import { createSmartAccountClient, createPaymaster,PaymasterMode } from '@biconomy/account';
 import { ethers } from 'ethers';
 import axios from 'axios';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
+// import {TokenDistributor} from '../utils/contracts/TokenDistributor.json';
+import TokenDistributor from "../utils/contracts/TokenDistributor.json" assert { type: "json" };
+
 const USDC_ABI = [
+  "function transfer(address to, uint256 amount) external returns (bool)",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function balanceOf(address account) external view returns (uint256)",
+  "function decimals() external view returns (uint8)"
+];
+
+const IERC20_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function balanceOf(address account) external view returns (uint256)",
@@ -111,158 +121,164 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
     throw error;
   }
 }
-async function calculateAndDistributeRewards(poolId, invoiceId, walletData, network, usdcTokenAddress) {
-  // Biconomy setup
-  const { signer, config } = getSigner_network(walletData, network);
-  const paymaster = await createPaymaster({
-      paymasterUrl: config.PAYMASTER_URL,
-      strictMode: true,
-  });
 
-  const biconomyAccount = await createSmartAccountClient({
-      signer,
-      paymaster,
-      bundlerUrl: config.BUNDLER_URL,
-  });
+async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, network, usdc_token_address) {
+  const DB_DECIMALS = 10;
+  const USDC_ONCHAIN_DECIMALS = 16;
+  const CONVERSION_FACTOR = BigInt(10 ** (USDC_ONCHAIN_DECIMALS - DB_DECIMALS)); 
 
-  // Get USDC info
-  const smartAccountAddress = await biconomyAccount.getAccountAddress();
-  const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
-  const usdcContract = new ethers.Contract(usdcTokenAddress, USDC_ABI, provider);
-  
-  const decimals = await usdcContract.decimals();
-  const balance = await usdcContract.balanceOf(smartAccountAddress);
-  const usdcBalance = ethers.formatUnits(balance, decimals);
-
-  // Get rewards
-  const pendingRewards = await PoolQueries.getPendingRewardsForDistribution(poolId, invoiceId);
-  if (!pendingRewards.length) {
-      throw new Error('No pending rewards found');
-  }
-
-  // Calculate USDC amounts
-  const totalPercentage = pendingRewards.reduce((sum, r) => sum + parseFloat(r.reward_percentage), 0);
-  if (Math.abs(totalPercentage - 100) > 0.01) {
-      throw new Error('Reward percentages must total 100%');
-  }
-
-  const rewardsWithUsdc = pendingRewards.map(reward => ({
-      ...reward,
-      calculated_reward_usdc: (parseFloat(usdcBalance) * reward.reward_percentage) / 100
-  }));
-
-  // Update USDC amounts
-  await PoolQueries.updateRewardsWithUsdcAmounts(rewardsWithUsdc);
-
-  // Execute transfers
-  const transfers = rewardsWithUsdc.map(reward => ({
-      to: reward.smart_account_address,
-      amount: reward.calculated_reward_usdc.toString()
-  }));
-
-  const batchResult = await batchSendUSDC({
-      transfers, 
+  console.log('Starting reward distribution for:', {
+      pool_id,
+      invoice_id,
       network,
-      tokenAddress: usdcTokenAddress,
-      wallet_data: walletData
+      usdc_address: usdc_token_address
   });
 
-  // Update statuses
-  await PoolQueries.finalizeRewardDistribution({
-      pool_id: poolId,
-      invoice_id: invoiceId,
-      transaction_hash: batchResult.transactionHash
-  });
+  try {
+      // Get pending rewards from database
+      const pendingRewards = await PoolQueries.getPendingRewards(pool_id, invoice_id);
+      console.log(`Found ${pendingRewards.length} pending rewards`);
 
-  return {
-      transaction_hash: batchResult.transactionHash,
-      smart_account: smartAccountAddress,
-      rewards_distributed: transfers.length,
-      total_usdc: batchResult.totalAmount
-  };
-}
-
-async function batchSendUSDC({ transfers, network, tokenAddress, wallet_data }) {
-  if (!wallet_data?.encryptedData || !wallet_data?.iv) {
-      throw new Error('Invalid encrypted wallet data');
-  }
-
-  if (!Array.isArray(transfers) || transfers.length === 0) {
-      throw new Error('Transfers must be a non-empty array');
-  }
-
-  if (transfers.length > 100) {
-      throw new Error('Maximum 100 transfers allowed in a batch');
-  }
-
-  // Validate each transfer
-  for (const transfer of transfers) {
-      if (!ethers.isAddress(transfer.to)) {
-          throw new Error(`Invalid recipient address: ${transfer.to}`);
+      if (!pendingRewards?.length) {
+          return {
+              success: false,
+              error: 'No pending rewards found'
+          };
       }
-      if (!transfer.amount || isNaN(transfer.amount)) {
-          throw new Error(`Invalid amount for recipient ${transfer.to}`);
-      }
-  }
 
-  const { signer, config } = getSigner_network(wallet_data, network);
-  const paymaster = await createPaymaster({
-      paymasterUrl: config.PAYMASTER_URL,
-      strictMode: true,
-  });
+      // Update rewards to processing status
+      await PoolQueries.updateRewardsToProcessing(pool_id, invoice_id);
+      console.log('Updated rewards status to processing');
 
-  const biconomySmartAccount = await createSmartAccountClient({
-      signer,
-      paymaster,
-      bundlerUrl: config.BUNDLER_URL,
-  });
+      // Initialize blockchain components
+      const { signer, config } = getSigner_network(wallet_data, network);
+      console.log('Blockchain configuration loaded');
 
-  const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-  const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
-  const usdcContract = new ethers.Contract(tokenAddress, USDC_ABI, provider);
-
-  const decimals = await usdcContract.decimals();
-  const balance = await usdcContract.balanceOf(smartAccountAddress);
-
-  let totalAmount = ethers.parseUnits('0', decimals);
-  const transactions = [];
-
-  for (const transfer of transfers) {
-      const amountInWei = ethers.parseUnits(transfer.amount.toString(), decimals);
-      totalAmount = totalAmount + amountInWei;
-
-      transactions.push({
-          to: tokenAddress,
-          data: usdcContract.interface.encodeFunctionData("transfer", [
-              transfer.to,
-              amountInWei
-          ])
+      const paymaster = await createPaymaster({
+          paymasterUrl: config.PAYMASTER_URL,
+          strictMode: true,
       });
+
+      const biconomySmartAccount = await createSmartAccountClient({
+          signer,
+          paymaster,
+          bundlerUrl: config.BUNDLER_URL,
+      });
+
+      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+      console.log('Smart Account Address:', smartAccountAddress);
+
+      // Initialize USDC contract
+      const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+      const usdcContract = new ethers.Contract(usdc_token_address, USDC_ABI, provider);
+      const balance = await usdcContract.balanceOf(smartAccountAddress);
+
+      console.log('Initial balance:', ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS));
+
+      // Aggregate rewards by recipient
+      const aggregatedRewards = pendingRewards.reduce((acc, reward) => {
+        if (!acc[reward.smart_account_address]) {
+            acc[reward.smart_account_address] = BigInt(0);
+        }
+    
+        const amountE8 = ethers.parseUnits(reward.calculated_reward_usdc, DB_DECIMALS); 
+        const amountE18 = amountE8 * CONVERSION_FACTOR; // Convert to 18 decimals
+        acc[reward.smart_account_address] += amountE18;
+        return acc;
+    }, {});
+
+      // Prepare transactions
+      const transactions = [];
+      let totalAmount = BigInt(0);
+
+      for (const [address, amount] of Object.entries(aggregatedRewards)) {
+          console.log('Processing transfer:', {
+              address,
+              originalAmount: ethers.formatUnits(amount, USDC_ONCHAIN_DECIMALS),
+              rawAmount: amount.toString(),
+          });
+
+          const transferData = usdcContract.interface.encodeFunctionData("transfer", [
+              address,
+              amount // Already in 18 decimals
+          ]);
+
+          transactions.push({
+              to: usdc_token_address,
+              data: transferData
+          });
+
+          totalAmount += amount;
+      }
+
+      console.log('Balance check:', {
+          required: ethers.formatUnits(totalAmount, USDC_ONCHAIN_DECIMALS),
+          available: ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS),
+          requiredRaw: totalAmount.toString(),
+          availableRaw: balance.toString()
+      });
+
+      if (balance < totalAmount) {
+          throw new Error(`Insufficient balance. Required: ${ethers.formatUnits(totalAmount, USDC_ONCHAIN_DECIMALS)}, Available: ${ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS)}`);
+      }
+
+      // Execute batch transaction
+      console.log('Sending batch transaction...');
+      const txResponse = await biconomySmartAccount.sendTransaction(transactions, {
+          paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+      });
+
+      const { transactionHash } = await txResponse.waitForTxHash();
+      console.log('Transaction hash:', transactionHash);
+
+      const txReceipt = await txResponse.wait();
+      
+      if (!txReceipt.success) {
+          throw new Error('Transaction failed to execute');
+      }
+
+      // Finalize the distribution
+      await PoolQueries.finalizeRewardDistribution(
+        transactionHash,
+          pool_id,
+          invoice_id
+      );
+      //talk with stan about what he would like in return 
+      return {
+          success: true,
+          message: "Reward distribution completed successfully",
+          data: {
+              transactionHash,
+              from: smartAccountAddress,
+              totalAmount: ethers.formatUnits(totalAmount, 18),
+              recipientCount: Object.keys(aggregatedRewards).length,
+              transfers: Object.entries(aggregatedRewards).map(([address, amount]) => ({
+                  address,
+                  amount: ethers.formatUnits(amount, 18)
+              }))
+          }
+      };
+
+  } catch (error) {
+      console.error('Distribution error:', error);
+
+      try {
+          await PoolQueries.revertProcessingStatus(pool_id, invoice_id);
+          console.log('Successfully reverted processing status');
+      } catch (revertError) {
+          console.error('Failed to revert processing status:', revertError);
+      }
+
+      return {
+          success: false,
+          error: error.message
+      };
   }
-
-  if (balance < totalAmount) {
-      throw new Error('Insufficient USDC balance for batch transfer');
-  }
-
-  const txResponse = await biconomySmartAccount.sendTransaction(transactions, {
-      paymasterServiceData: { mode: PaymasterMode.SPONSORED }
-  });
-
-  const { transactionHash } = await txResponse.waitForTxHash();
-  const txReceipt = await txResponse.wait();
-
-  if (txReceipt.success=='false') {
-      throw new Error('Batch transfer failed');
-  }
-
-  return {
-      transactionHash,
-      from: smartAccountAddress,
-      totalAmount: ethers.formatUnits(totalAmount, decimals),
-      transferCount: transfers.length,
-      receipt: txReceipt
-  };
 }
+
+
+
+
 // Webhook event handlers
 async function handleSetupIntentSucceeded(setupIntent) {
   const { customer, payment_method, metadata } = setupIntent;
@@ -510,7 +526,7 @@ export const Payment_Controller = {
           });
         } catch (error) {
           console.error('Error creating billing portal session:', error);
-          res.status(500).json({
+          res.status(200).json({
             success: false,
             error: error.message,
           });
@@ -720,13 +736,13 @@ async createAndChargeInvoice(req, res) {
           description: description || 'Pool payment'
       });
       console.log('Created invoice item:', {
-        id: invoiceItem.id,
-        amount: invoiceItem.amount,
-        currency: invoiceItem.currency
-    });
+          id: invoiceItem.id,
+          amount: invoiceItem.amount,
+          currency: invoiceItem.currency
+      });
       // Verify invoice item was created with correct amount
       if (!invoiceItem || invoiceItem.amount <= 0) {
-          return res.status(200).json({
+          return res.status(500).json({
               success: false,
               error: 'Failed to create invoice item with correct amount'
           });
@@ -735,7 +751,7 @@ async createAndChargeInvoice(req, res) {
       // Create invoice with items
       const invoice = await stripe.invoices.create({
           customer: poolInfo.customer_id,
-          auto_advance: false, // Change to false
+          auto_advance: false, 
           currency: currency.toLowerCase(),
           collection_method: 'charge_automatically',
           default_payment_method: defaultPaymentMethodId.id,
@@ -747,45 +763,57 @@ async createAndChargeInvoice(req, res) {
       });
 
       console.log('Created invoice:', {
-        id: invoice.id,
-        amount_due: invoice.amount_due,
-        currency: invoice.currency,
-        items_count: invoice.lines.data.length
-    });
+          id: invoice.id,
+          amount_due: invoice.amount_due,
+          currency: invoice.currency,
+          items_count: invoice.lines.data.length
+      });
 
       // Finalize invoice to ensure all amounts are calculated
       const finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id);
 
       // Verify invoice amount before payment
       if (finalizedInvoice.amount_due <= 0) {
-          return res.status(200).json({
+          return res.status(500).json({
               success: false,
               error: 'Invoice amount is zero'
           });
       }
 
-      // Pay the invoice
-      const paidInvoice = await stripe.invoices.pay(finalizedInvoice.id, {
-          payment_method: defaultPaymentMethodId.id,
-      });
+      // Pay the invoice with error handling
+      let paidInvoice;
+      try {
+          paidInvoice = await stripe.invoices.pay(finalizedInvoice.id, {
+              payment_method: defaultPaymentMethodId.id,
+          });
+      } catch (paymentError) {
+          return res.status(200).json({
+            success: false,
+            error: 'Payment failed',
+            details: paymentError.message,
+            invoice_id: invoice.id
+          });
+      }
 
       // Verify payment intent exists
       if (!paidInvoice.payment_intent) {
-          return res.status(200).json({
+          return res.status(500).json({
               success: false,
               error: 'Payment successful but no payment intent created',
               invoice_id: paidInvoice.id
           });
       }
+
       const mapStripeStatus = (stripeStatus) => {
-        const statusMap = {
-            'paid': 'succeeded',
-            'unpaid': 'pending',
-            'uncollectible': 'failed',
-            'void': 'cancelled',
-        };
-        return statusMap[stripeStatus] || 'pending';
-    };
+          const statusMap = {
+              'paid': 'succeeded',
+              'unpaid': 'pending',
+              'uncollectible': 'failed',
+              'void': 'cancelled',
+          };
+          return statusMap[stripeStatus] || 'pending';
+      };
+
       // Continue with database insertion...
       await PoolQueries.createInvoice({
           invoice_id: paidInvoice.id,
@@ -1078,45 +1106,36 @@ async createSmartAccount  (req, res)  {
   }
 },
 async  distributePoolRewards(req, res) {
+  const { pool_id, invoice_id, usdc_token_address, network } = req.body;
+  const { wallet_data } = req.auth;
+
   try {
-      const { pool_id, invoice_id, usdc_token_address, network } = req.body;
-      const { wallet_data } = req.auth;
-
-      if (!wallet_data?.encryptedData || !wallet_data?.iv) {
-          return res.status(400).json({ error: 'Invalid wallet data' });
+      // Get pending rewards
+      const pendingRewards = await PoolQueries.getPendingRewards(pool_id, invoice_id);
+      
+      if (!pendingRewards || pendingRewards.length === 0) {
+          return res.status(200).json({
+              success: false,
+              error: 'No pending rewards found'
+          });
       }
+      console.log("usdc_token_address",usdc_token_address)  
+      const result = await calculateAndDistributeRewards(
+          pool_id,
+          invoice_id,
+          wallet_data,
+          network,
+          usdc_token_address
+      );
 
-      if (!ethers.isAddress(usdc_token_address)) {
-          return res.status(400).json({ error: 'Invalid USDC address' });
-      }
-      const distributionStatus = await PoolQueries.getDistributionStatus(pool_id, invoice_id);
-       if (distributionStatus.isDistributed) {
-           return res.status(200).json({
-               success: false,
-               error: 'Rewards already distributed',
-               data: {
-                   distribution_time: distributionStatus.distributed_at,
-                   transaction_hash: distributionStatus.blockchain_tx_id,
-                   smart_account_address: distributionStatus.smart_account_address,
-                   rewards: distributionStatus.rewards.map(r => ({
-                       smart_account: r.smart_account_address,
-                       percentage: r.reward_percentage,
-                       amount: r.calculated_reward_usdc
-                   }))
-               }
-           });
-       }
-
-      const result = await calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, network, usdc_token_address);
-
-      res.status(200).json({
-          success: true,
-          data: result
-      });
+      return res.status(200).json(result);
 
   } catch (error) {
-      console.error('Reward distribution error:', error);
-      res.status(500).json({ success: false, error: error.message });
+      console.error('Distribution error:', error);
+      return res.status(200).json({
+          success: false,
+          error: error.message
+      });
   }
 },
 async calculateRewardUSDCAmount(req, res) {
@@ -1133,13 +1152,28 @@ async calculateRewardUSDCAmount(req, res) {
       }
 
       const currency = rewards[0].metadata.invoice_currency.toLowerCase();
-      
-      // Convert from smallest unit to standard unit for all currencies
-      const convertToStandardUnit = (amount) => amount / 100;
+
+      // Helper function to convert from smallest unit based on currency
+      const convertToStandardUnit = (amount, curr) => {
+          const zeroDecimalCurrencies = ["bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"];
+          const threeDecimalCurrencies = ["bhd", "jod", "kwd", "omr", "tnd"];
+          let currency_decimals;
+          if (zeroDecimalCurrencies.includes(curr)) {
+            currency_decimals=0
+              return amount; // No conversion needed
+          } else if (threeDecimalCurrencies.includes(curr)) {
+            currency_decimals=3
+              return amount / 1000; // Divide by 1000 for 3 decimal currencies
+          } else {
+            currency_decimals=2
+              return amount / 100; // Default - divide 
+              // by 100 for 2 decimal currencies
+          }
+      };
 
       if (currency === 'usdc') {
           const totalAmount = rewards.reduce((sum, r) => {
-              const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+              const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward), currency);
               return sum + actualAmount;
           }, 0);
           
@@ -1159,23 +1193,24 @@ async calculateRewardUSDCAmount(req, res) {
 
       const exchangeRate = await getUSDCExchangeRate(currency);
       const totalRewardAmount = rewards.reduce((sum, r) => {
-          const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+          const actualAmount = convertToStandardUnit(parseFloat(r.calculated_reward), currency);
           return sum + actualAmount;
       }, 0);
 
       const usdcAmount = Number((totalRewardAmount * exchangeRate).toFixed(USDC_DECIMALS));
 
       const formattedRewards = rewards.map(r => {
-          const actualRewardAmount = convertToStandardUnit(parseFloat(r.calculated_reward));
+          const actualRewardAmount = convertToStandardUnit(parseFloat(r.calculated_reward), currency);
           const rewardUsdcAmount = Number((actualRewardAmount * exchangeRate).toFixed(USDC_DECIMALS));
           return {
               smart_account_address: r.smart_account_address,
               reward_percentage: r.reward_percentage,
               reward_amount: actualRewardAmount,
-              usdc_amount: rewardUsdcAmount
+              usdc_amount: rewardUsdcAmount,
+              original_amount: r.calculated_reward 
           };
       });
-
+      
       res.status(200).json({
           success: true,
           data: {
@@ -1230,6 +1265,221 @@ async getInvoicesPendingTreasury(req, res) {
       });
   }
 }
-};
+,
 
+
+async processAndDistributeRewards(req, res) {
+  try {
+      const { pool_id, invoice_id, network, usdc_token_address, distributor_contract_address } = req.body;
+      const { wallet_data } = req.auth;
+
+      if (!wallet_data?.encryptedData || !wallet_data?.iv) {
+          return res.status(200).json({ 
+              success: false,
+              error: 'Invalid wallet data' 
+          });
+      }
+
+      // Format USDC amounts to 6 decimals
+      const formatUSDC = (amount) => {
+          return parseFloat(amount).toFixed(6).replace(/\.?0+$/, '');
+      };
+      const rewards_without_usdc = await PoolQueries.getPendingRewardsWithoutUSDC(pool_id, invoice_id);
+        if (!rewards_without_usdc?.length) {
+            return res.status(200).json({
+                success: false,
+                error: 'No pending rewards found getPendingRewardsWithoutUSDC '
+            });
+        }
+
+        const exchangeRate = await getUSDCExchangeRate(rewards_without_usdc[0].currency.toLowerCase());
+        
+        // Update rewards with USDC calculations
+        await PoolQueries.updateRewardsWithUSDC({
+            pool_id,
+            invoice_id,
+            exchange_rate: exchangeRate,
+            exchange_rate_date: new Date(),
+            rewards: rewards_without_usdc.map(reward => ({
+                id: reward.id,
+                calculated_reward_usdc: parseFloat(reward.calculated_reward) * exchangeRate
+            }))
+        });
+      // Step 1: Get and validate rewards
+      const rewards = await PoolQueries.getPendingRewards_pool(pool_id, invoice_id);
+      if (!rewards?.length) {
+          return res.status(200).json({
+              success: false,
+              error: 'No pending rewards found getPendingRewards_pool'
+          });
+      }
+
+      // Aggregate rewards by smart account address
+      const aggregatedRewards = rewards.reduce((acc, reward) => {
+          if (!acc[reward.pool_smart_account]) {
+              acc[reward.pool_smart_account] = 0;
+          }
+          acc[reward.pool_smart_account] += parseFloat(reward.calculated_reward_usdc);
+          return acc;
+      }, {});
+
+      const consolidatedRewards = Object.entries(aggregatedRewards).map(([address, total]) => ({
+          address,
+          amount: formatUSDC(total)
+      }));
+
+      console.log('Consolidated rewards:', consolidatedRewards);
+
+      // Step 2: Setup smart account
+      const { signer, config } = getSigner_network(wallet_data, network);
+      const paymaster = await createPaymaster({
+          paymasterUrl: config.PAYMASTER_URL,
+          strictMode: true,
+      });
+
+      const biconomyAccount = await createSmartAccountClient({
+          signer,
+          paymaster,
+          bundlerUrl: config.BUNDLER_URL,
+      });
+
+      // Step 3: Setup contract interface
+      const distributorABI = [
+          "function getContractBalance() view returns (uint256)",
+          "function setBulkWithdrawalAllowances(address[] calldata recipients, uint256[] calldata amounts)",
+          "function withdrawTokens(address withdrawalAddress)"
+      ];
+
+      const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+      const distributorContract = new ethers.Contract(distributor_contract_address, distributorABI, provider);
+
+      // Step 4: Calculate total and check contract balance
+      const totalRequired = Object.values(aggregatedRewards).reduce((sum, amount) => {
+        return sum + ethers.parseUnits(amount.toString(), 16); 
+      }, BigInt(0));
+
+      const contractBalance = await distributorContract.getContractBalance();
+
+      console.log("Balance check:", {
+        contractBalance: contractBalance.toString(), // Already in e18
+        totalRequired: totalRequired.toString(), // In e18
+      });
+    
+      if (contractBalance < totalRequired) {
+        return res.status(200).json({
+          success: false,
+          error: "Insufficient USDC in distributor contract",
+          details: {
+            required: ethers.formatUnits(totalRequired, 18), // Show in readable format
+            available: ethers.formatUnits(contractBalance, 18), // Show in readable format
+          },
+        });
+      }
+
+      // Step 5: Process distribution with retries
+      const retryTransaction = async (retryCount = 0) => {
+          try {
+              // Set bulk allowances
+              const setBulkAllowanceData = new ethers.Interface(distributorABI)
+                  .encodeFunctionData("setBulkWithdrawalAllowances", [
+                      consolidatedRewards.map(r => r.address),
+                      consolidatedRewards.map(r => totalRequired)
+                  ]);
+
+              console.log('Setting allowances:', consolidatedRewards);
+
+              const allowanceTx = {
+                  to: distributor_contract_address,
+                  data: setBulkAllowanceData
+              };
+
+              const allowanceResponse = await biconomyAccount.sendTransaction(allowanceTx, {
+                  paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+              });
+
+              console.log('Allowance transaction sent:', allowanceResponse);
+              
+              const allowanceReceipt = await allowanceResponse.wait();
+              if (!allowanceReceipt.success) {
+                  throw new Error('Setting allowances failed');
+              }
+
+              // Process withdrawals for consolidated amounts
+              const withdrawResults = [];
+              for (const reward of consolidatedRewards) {
+                  console.log('Processing withdrawal for:', reward.address);
+
+                  const withdrawData = new ethers.Interface(distributorABI)
+                      .encodeFunctionData("withdrawTokens", [reward.address]);
+
+                  const withdrawTx = {
+                      to: distributor_contract_address,
+                      data: withdrawData
+                  };
+
+                  const withdrawResponse = await biconomyAccount.sendTransaction(withdrawTx, {
+                      paymasterServiceData: { mode: PaymasterMode.SPONSORED }
+                  });
+
+                  const withdrawReceipt = await withdrawResponse.wait();
+                  if (!withdrawReceipt.success) {
+                      throw new Error(`Withdrawal failed for ${reward.address}`);
+                  }
+
+                  withdrawResults.push({
+                      address: reward.address,
+                      amount: reward.amount,
+                      txHash: withdrawReceipt.transactionHash
+                  });
+              }
+
+              // Update status in database
+              await PoolQueries.updateDistributionStatus({
+                  pool_id,
+                  invoice_id,
+                  transaction_hash: allowanceReceipt.transactionHash,
+                  status: 'succeeded'
+              });
+
+              return res.status(200).json({
+                success: true,
+                data: {
+                    transactionHash: allowanceReceipt.receipt.transactionHash,
+                    withdrawals: withdrawResults.map(withdrawal => ({
+                        address: withdrawal.address
+                    })),
+                    total_distributed: ethers.formatUnits(totalRequired, 18)
+                }
+            });
+
+          } catch (error) {
+              console.error(`Distribution error (attempt ${retryCount + 1}):`, error);
+
+              if (retryCount < 3) {
+                  const delay = 2000 + (retryCount * 1000);
+                  console.log(`Retrying in ${delay}ms...`);
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                  return await retryTransaction(retryCount + 1);
+              }
+
+              return res.status(200).json({
+                  success: false,
+                  error: 'Distribution failed after maximum retries',
+                  details: error.message
+              });
+          }
+      };
+
+      await retryTransaction();
+
+  } catch (error) {
+      console.error('Distribution process error:', error);
+      return res.status(200).json({
+          success: false,
+          error: error.message
+      });
+  }
+}
+
+}
 
