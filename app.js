@@ -214,7 +214,12 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
         payout: payoutId,
         limit: 100 // Adjust based on your needs
       });
-  
+      const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
+      console.log('Transaction details:', {
+        total_transactions: balanceTransactions.data.length,
+        charge_transactions: chargeTransactions.length,
+        transaction_ids: chargeTransactions.map(t => t.id)
+      });
       // 3. Process and format the transactions data
       const transactionsData = balanceTransactions.data.map(transaction => ({
         id: transaction.id,
@@ -258,7 +263,8 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
           arrival_date: new Date(payout.arrival_date * 1000).toISOString()
         },
         summary,
-        transactions: transactionsData
+        transactions: transactionsData,
+        charge_transactions: chargeTransactions
       });
   
     } catch (error) {
@@ -267,7 +273,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
         success: false,
         error: error.message
       });
-    }
+    } 
   });
 
 

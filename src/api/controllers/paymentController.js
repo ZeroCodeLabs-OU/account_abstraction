@@ -348,6 +348,7 @@ async function handlePayoutPaid(payout) {
       payout: payout.id
     });
 
+    console.log('Balance transactions:', balanceTransactions.data);
     // Filter only charge transactions as these are what we store in transfers
     const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
     
