@@ -690,11 +690,37 @@ static async updateRewardsWithUsdcAmounts(rewards) {
     }
   }
 
+static async getTransfersByTransactionIds(transactionIds) {
+    const client = await pool.connect();
+    try {
+      const query = `
+        SELECT id, transaction_id, amount, status, payout_id
+        FROM payment_system.transfers
+        WHERE transaction_id = ANY($1);
+      `;
+      
+      const result = await client.query(query, [transactionIds]);
+      return result.rows;
+    } catch (error) {
+      console.error('Error getting transfers:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async updateTransfersWithPayout(data) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-  
+
+      console.log('Updating transfers with data:', {
+        payout_id: data.payout_id,
+        settlement_datetime: data.settlement_datetime,
+        transaction_count: data.transaction_ids.length,
+        transaction_ids: data.transaction_ids
+      });
+
       const query = `
         UPDATE payment_system.transfers
         SET 
@@ -702,19 +728,31 @@ static async updateRewardsWithUsdcAmounts(rewards) {
           settlement_datetime = $2,
           updated_at = CURRENT_TIMESTAMP
         WHERE transaction_id = ANY($3)
-        RETURNING *;
+        RETURNING id, transaction_id, amount, status, payout_id, settlement_datetime;
       `;
-  
+
       const result = await client.query(query, [
         data.payout_id,
         data.settlement_datetime,
         data.transaction_ids
       ]);
-  
+
+      console.log('Update query result:', {
+        rows_affected: result.rowCount,
+        updated_records: result.rows
+      });
+
       await client.query('COMMIT');
       return result.rows;
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error('Error updating transfers:', error);
+      console.error('Error details:', {
+        message: error.message,
+        detail: error.detail,
+        hint: error.hint,
+        where: error.where
+      });
       throw error;
     } finally {
       client.release();

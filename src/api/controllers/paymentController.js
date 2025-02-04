@@ -348,20 +348,46 @@ async function handlePayoutPaid(payout) {
       payout: payout.id
     });
 
-    // Update all transfers with payout information
-    await PoolQueries.updateTransfersWithPayout({
-      payout_id: payout.id,
-      settlement_datetime: new Date(payout.arrival_date * 1000),
-      transaction_ids: balanceTransactions.data.map(t => t.id)
+    // Filter only charge transactions as these are what we store in transfers
+    const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
+    
+    console.log('Transaction details:', {
+      total_transactions: balanceTransactions.data.length,
+      charge_transactions: chargeTransactions.length,
+      transaction_ids: chargeTransactions.map(t => t.id)
     });
 
-    console.log('Payout processed:', {
+    // First verify if transfers exist for these transactions
+    const existingTransfers = await PoolQueries.getTransfersByTransactionIds(
+      chargeTransactions.map(t => t.id)
+    );
+
+    console.log('Existing transfers:', {
+      transfers_found: existingTransfers.length,
+      transfer_ids: existingTransfers.map(t => t.id)
+    });
+
+    if (existingTransfers.length === 0) {
+      console.warn('No existing transfers found for these transactions');
+      return;
+    }
+
+    // Update all transfers with payout information
+    const result = await PoolQueries.updateTransfersWithPayout({
       payout_id: payout.id,
-      transactions_processed: balanceTransactions.data.length
+      settlement_datetime: new Date(payout.arrival_date * 1000),
+      transaction_ids: chargeTransactions.map(t => t.id)
+    });
+
+    console.log('Update result:', {
+      payout_id: payout.id,
+      updated_transfers: result.length,
+      updated_records: result
     });
 
   } catch (error) {
-    console.error('Error processing payout:', error);
+    console.error('Error processing payout:', error.message);
+    console.error('Error stack:', error.stack);
     throw error;
   }
 }
@@ -1117,7 +1143,7 @@ async  distributePoolRewards(req, res) {
       if (!rewards?.length) {
           return res.status(200).json({
               success: false,
-              error: 'No pending rewards found getPendingRewards_user'
+              error: 'No pending rewards found, please check treasury_withdraw status'
           });
       }
 

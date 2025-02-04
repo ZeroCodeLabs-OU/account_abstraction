@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import express from 'express';
 import multer from 'multer';
 
-
+import stripe from './src/api/config/stripe.js';
 
 import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
 import {
@@ -142,6 +142,246 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
   app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
   app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);
+  
+  // app.post('/trigger-payout', async (req, res) => {
+  //   try {
+  //     const { transaction_id, method, currency } = req.body;
+  
+  //     if (!transaction_id || !method || !currency) {
+  //       return res.status(400).json({
+  //         success: false,
+  //         message: 'Transaction ID, method, and currency are required'
+  //       });
+  //     }
+  
+  //     // 1️⃣ Fetch balance transaction details from Stripe
+  //     const balanceTransaction = await stripe.balanceTransactions.retrieve(transaction_id);
+      
+  //     if (!balanceTransaction) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         message: 'Balance transaction not found'
+  //       });
+  //     }
+  
+  //     // 2️⃣ Ensure the transaction is available for payout
+  //     if (!['available'].includes(balanceTransaction.status)) {
+  //       return res.status(400).json({
+  //         success: false,
+  //         message: 'Balance transaction is not available for payout yet'
+  //       });
+  //     }
+  
+  //     // 3️⃣ Initiate a Payout for the Transaction Amount
+  //     const payout = await stripe.payouts.create({
+  //       amount: balanceTransaction.net, // Use net amount after fees
+  //       currency: currency, // Ensure currency matches the transaction
+  //       method: method, // "standard" or "instant"
+  //     });
+  
+  //     return res.status(200).json({
+  //       success: true,
+  //       message: 'Payout initiated successfully',
+  //       payout_id: payout.id,
+  //       payout_status: payout.status
+  //     });
+  
+  //   } catch (error) {
+  //     console.error('Error triggering payout:', error);
+  //     return res.status(500).json({
+  //       success: false,
+  //       error: error.message
+  //     });
+  //   }
+  // });
+  
+  app.get('/payout-details/:payoutId', async (req, res) => {
+    try {
+      const { payoutId } = req.params;
+  
+      if (!payoutId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payout ID is required'
+        });
+      }
+  
+      // 1. First fetch the payout details
+      const payout = await stripe.payouts.retrieve(payoutId);
+      
+      // 2. Then fetch all balance transactions associated with this payout
+      const balanceTransactions = await stripe.balanceTransactions.list({
+        payout: payoutId,
+        limit: 100 // Adjust based on your needs
+      });
+  
+      // 3. Process and format the transactions data
+      const transactionsData = balanceTransactions.data.map(transaction => ({
+        id: transaction.id,
+        amount: transaction.amount,
+        net: transaction.net,
+        fee: transaction.fee,
+        currency: transaction.currency,
+        type: transaction.type,
+        status: transaction.status,
+        available_on: new Date(transaction.available_on * 1000).toISOString(),
+        created: new Date(transaction.created * 1000).toISOString()
+      }));
+  
+      // 4. Calculate some summary statistics
+      const summary = {
+        total_amount: transactionsData.reduce((sum, t) => sum + t.amount, 0),
+        total_fees: transactionsData.reduce((sum, t) => sum + t.fee, 0),
+        total_net: transactionsData.reduce((sum, t) => sum + t.net, 0),
+        transaction_count: transactionsData.length
+      };
+  
+      // Log detailed information to console
+      console.log('Payout Details:', {
+        payout_id: payout.id,
+        payout_amount: payout.amount,
+        payout_status: payout.status,
+        payout_currency: payout.currency,
+        arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
+        summary,
+        transactions: transactionsData
+      });
+  
+      // Return response to client
+      return res.status(200).json({
+        success: true,
+        payout: {
+          id: payout.id,
+          amount: payout.amount,
+          currency: payout.currency,
+          status: payout.status,
+          arrival_date: new Date(payout.arrival_date * 1000).toISOString()
+        },
+        summary,
+        transactions: transactionsData
+      });
+  
+    } catch (error) {
+      console.error('Error fetching payout details:', error);
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
+
+  app.get('/transaction-invoice/:transactionId', async (req, res) => {
+    try {
+      const { transactionId } = req.params;
+  
+      if (!transactionId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Transaction ID is required'
+        });
+      }
+  
+      // 1. Retrieve the balance transaction
+      const balanceTransaction = await stripe.balanceTransactions.retrieve(transactionId);
+      
+      if (!balanceTransaction?.source) {
+        return res.status(404).json({
+          success: false,
+          message: `No source found for transaction: ${transactionId}`
+        });
+      }
+  
+      // 2. Check if this is a charge-type transaction
+      if (balanceTransaction.type !== 'charge') {
+        return res.status(400).json({
+          success: false,
+          message: `Transaction ${transactionId} is not a charge (type: ${balanceTransaction.type})`
+        });
+      }
+  
+      // 3. Get the charge details
+      const charge = await stripe.charges.retrieve(balanceTransaction.source);
+  
+      if (!charge?.payment_intent) {
+        return res.status(404).json({
+          success: false,
+          message: `No payment intent found for charge: ${charge.id}`
+        });
+      }
+  
+      // 4. Get the payment intent
+      const paymentIntent = await stripe.paymentIntents.retrieve(charge.payment_intent);
+  
+      if (!paymentIntent?.invoice) {
+        return res.status(404).json({
+          success: false,
+          message: `No invoice found for payment intent: ${paymentIntent.id}`
+        });
+      }
+  
+      // 5. Get the invoice
+      const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+  
+      // 6. Format the response
+      const invoiceData = {
+        invoice_details: {
+          id: invoice.id,
+          number: invoice.number,
+          status: invoice.status,
+          amount_paid: invoice.amount_paid,
+          amount_due: invoice.amount_due,
+          currency: invoice.currency,
+          customer_id: invoice.customer,
+          customer_email: invoice.customer_email,
+          metadata: invoice.metadata,
+          created: new Date(invoice.created * 1000).toISOString(),
+          payment_intent_id: paymentIntent.id
+        },
+        transaction_details: {
+          id: balanceTransaction.id,
+          amount: balanceTransaction.amount,
+          net: balanceTransaction.net,
+          fee: balanceTransaction.fee,
+          currency: balanceTransaction.currency,
+          type: balanceTransaction.type,
+          status: balanceTransaction.status,
+          available_on: new Date(balanceTransaction.available_on * 1000).toISOString(),
+          created: new Date(balanceTransaction.created * 1000).toISOString()
+        },
+        charge_details: {
+          id: charge.id,
+          amount: charge.amount,
+          status: charge.status,
+          payment_method: charge.payment_method,
+          payment_method_details: charge.payment_method_details
+        }
+      };
+  
+      // Log detailed information to console
+      console.log('Invoice Details:', {
+        transaction_id: transactionId,
+        invoice_id: invoice.id,
+        payment_intent_id: paymentIntent.id,
+        charge_id: charge.id,
+        amount: invoice.amount_paid,
+        status: invoice.status
+      });
+  
+      // Return response to client
+      return res.status(200).json({
+        success: true,
+        data: invoiceData
+      });
+  
+    } catch (error) {
+      console.error('Error fetching invoice details:', error);
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
@@ -158,13 +398,3 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
 
-//change the way we distribute from pool to user look into pool rewards table and get the amount to distribute 
-//get the amount of usdc that needs to be distributed do the checks and then distribute it to the user
-//update the pool rewards table with the amount distributed and update associated invoice and pool_id reward table 
-
-//deploy the new contract on testnet look into the contract controller and deploy the contract on testnet
-// deploy usdt for testing 
-// create a endpoint where first we get exchange rate and multiple it with all the included pools and then set it in the table 
-// and calculate it and store it in calcuated reward with that exchange rate  for that pool
-// and then do check if the required usdc amount is greateer or equal to the total amount of usdc in contract then set the bulk setBulkWithdrawalAllowances and then check if usdc allowance is greater than or equal to do it and then do the distributino from contract to the pool smart address
-// and then set the distribution status to true in db 
