@@ -343,37 +343,82 @@ async function handlePayoutPaid(payout) {
   try {
     console.log('Processing payout:', payout.id);
 
-    // Get all balance transactions for this payout
-    const balanceTransactions = await stripe.balanceTransactions.list({
-      payout: payout.id
-    });
+    // Get ALL balance transactions for this payout using pagination
+    let allTransactions = [];
+    let hasMore = true;
+    let startingAfter = null;
+    
+    while (hasMore) {
+      const params = {
+        payout: payout.id,
+        limit: 100
+      };
+      
+      if (startingAfter) {
+        params.starting_after = startingAfter;
+      }
 
-    console.log('Balance transactions:', balanceTransactions.data);
-    // Filter only charge transactions as these are what we store in transfers
-    const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
+      const balanceTransactions = await stripe.balanceTransactions.list(params);
+      
+      allTransactions = [...allTransactions, ...balanceTransactions.data];
+      hasMore = balanceTransactions.has_more;
+      
+      if (hasMore && balanceTransactions.data.length > 0) {
+        startingAfter = balanceTransactions.data[balanceTransactions.data.length - 1].id;
+      }
+    }
+
+    // Log raw transaction data for debugging
+    console.log('Raw transaction count:', allTransactions.length);
+    console.log('Transaction types:', allTransactions.reduce((acc, t) => {
+      acc[t.type] = (acc[t.type] || 0) + 1;
+      return acc;
+    }, {}));
+
+    // Filter charge transactions
+    const chargeTransactions = allTransactions.filter(t => t.type === 'charge');
     
     console.log('Transaction details:', {
-      total_transactions: balanceTransactions.data.length,
+      total_transactions: allTransactions.length,
       charge_transactions: chargeTransactions.length,
-      transaction_ids: chargeTransactions.map(t => t.id)
+      transaction_ids: chargeTransactions.map(t => t.id),
+      charges: chargeTransactions.map(t => ({
+        id: t.id,
+        amount: t.amount,
+        status: t.status,
+        source: t.source
+      }))
     });
 
-    // First verify if transfers exist for these transactions
+    if (chargeTransactions.length === 0) {
+      console.warn('No charge transactions found for payout:', payout.id);
+      return;
+    }
+
+    // Verify existing transfers
     const existingTransfers = await PoolQueries.getTransfersByTransactionIds(
       chargeTransactions.map(t => t.id)
     );
 
-    console.log('Existing transfers:', {
+    console.log('Found existing transfers:', {
       transfers_found: existingTransfers.length,
-      transfer_ids: existingTransfers.map(t => t.id)
+      transfer_ids: existingTransfers.map(t => t.id),
+      transfer_details: existingTransfers.map(t => ({
+        id: t.id,
+        transaction_id: t.transaction_id,
+        amount: t.amount,
+        status: t.status
+      }))
     });
 
     if (existingTransfers.length === 0) {
-      console.warn('No existing transfers found for these transactions');
+      console.warn('No existing transfers found for transactions. Transaction IDs:', 
+        chargeTransactions.map(t => t.id)
+      );
       return;
     }
 
-    // Update all transfers with payout information
+    // Update transfers with payout information
     const result = await PoolQueries.updateTransfersWithPayout({
       payout_id: payout.id,
       settlement_datetime: new Date(payout.arrival_date * 1000),
@@ -386,8 +431,19 @@ async function handlePayoutPaid(payout) {
       updated_records: result
     });
 
+    // Verify all expected transfers were updated
+    if (result.length !== existingTransfers.length) {
+      console.warn('Not all transfers were updated:', {
+        expected: existingTransfers.length,
+        actual: result.length,
+        missing: existingTransfers.filter(et => 
+          !result.find(r => r.transaction_id === et.transaction_id)
+        ).map(t => t.transaction_id)
+      });
+    }
+
   } catch (error) {
-    console.error('Error processing payout:', error.message);
+    console.error('Error processing payout:', error);
     console.error('Error stack:', error.stack);
     throw error;
   }
