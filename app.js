@@ -100,33 +100,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pool/treasury-info',authenticateToken, getPoolTreasuryInfo);
 
   
-  
-  
-  //stripe
-  // app.post('/pools/create-checkout',authenticateToken, stripeController.createCheckoutSession);
-  // app.get('/pools/:poolId/subscriptions',authenticateToken, stripeController.getSubscriptionsByPoolId);
-  // app.get('/pools/:poolId/balance',authenticateToken, stripeController.getPoolBalance);
-  // app.get('/pools/:poolId/invoices',authenticateToken, stripeController.getInvoiceTransactions);
-
-  // app.post('/pools/:poolId/cancel',authenticateToken, stripeController.cancelSubscription);
-  // app.post('/pools/:poolId/pause',authenticateToken, stripeController.PauseSubscription);
-  // app.post('/pools/:poolId/resume',authenticateToken, stripeController.ResumeSubscription);
-
-  // app.post('/pools/:poolId/update-session',authenticateToken, stripeController.createUpdateSession);
-  // app.post('/pools/:poolId/update-price', authenticateToken,stripeController.updateSubscriptionPrice);
-  // app.post('/pools/:poolId/test-payment-method', authenticateToken,stripeController.testingforpaymentype);
-
-  // // config endpoint used for .env setup for stripe
-  // app.post('/setup/config-portal', authenticateToken,stripeController.setupPortalConfiguration);
-  // app.post('/setup/create-product', authenticateToken,stripeController.createProductId);
-
-  // app.post('/admin/transfers/withdraw/:payout_id', authenticateToken, stripeController.markTransfersWithdrawn);
-  // app.get('/admin/:poolId/transfers', authenticateToken, stripeController.getTransfersByPool);
-  // app.get('/admin/transfers/payout/:payoutId', authenticateToken, stripeController.getTransfersByPayout);
-
-  // app.post("/test/subscription",stripeController.createAndChargeInvoice);
-  // app.post("/test/subscription-card",stripeController.createSetupSession);
-  // app.post("/test/subscription-card/update",stripeController.createBillingPortalSession);
+  // stripe
 
   app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
   app.get("/pools/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
@@ -143,58 +117,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
   app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);
   
-  // app.post('/trigger-payout', async (req, res) => {
-  //   try {
-  //     const { transaction_id, method, currency } = req.body;
-  
-  //     if (!transaction_id || !method || !currency) {
-  //       return res.status(400).json({
-  //         success: false,
-  //         message: 'Transaction ID, method, and currency are required'
-  //       });
-  //     }
-  
-  //     // 1️⃣ Fetch balance transaction details from Stripe
-  //     const balanceTransaction = await stripe.balanceTransactions.retrieve(transaction_id);
-      
-  //     if (!balanceTransaction) {
-  //       return res.status(404).json({
-  //         success: false,
-  //         message: 'Balance transaction not found'
-  //       });
-  //     }
-  
-  //     // 2️⃣ Ensure the transaction is available for payout
-  //     if (!['available'].includes(balanceTransaction.status)) {
-  //       return res.status(400).json({
-  //         success: false,
-  //         message: 'Balance transaction is not available for payout yet'
-  //       });
-  //     }
-  
-  //     // 3️⃣ Initiate a Payout for the Transaction Amount
-  //     const payout = await stripe.payouts.create({
-  //       amount: balanceTransaction.net, // Use net amount after fees
-  //       currency: currency, // Ensure currency matches the transaction
-  //       method: method, // "standard" or "instant"
-  //     });
-  
-  //     return res.status(200).json({
-  //       success: true,
-  //       message: 'Payout initiated successfully',
-  //       payout_id: payout.id,
-  //       payout_status: payout.status
-  //     });
-  
-  //   } catch (error) {
-  //     console.error('Error triggering payout:', error);
-  //     return res.status(500).json({
-  //       success: false,
-  //       error: error.message
-  //     });
-  //   }
-  // });
-  
+  //testing
   app.get('/payout-details/:payoutId', async (req, res) => {
     try {
       const { payoutId } = req.params;
@@ -388,6 +311,9 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
       });
     }
   });
+
+
+
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
       res.status(401).send('Unauthorized: No token provided or token was invalid');
