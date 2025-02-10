@@ -25,7 +25,7 @@ import {
   revokeTokens
 } from './src/api/controllers/contractController.js';
 import { generateQRData, decryptAndRevoke } from './src/api/controllers/qrController.js';
-import {getERC20Balance,depositToPool,withdrawUSDC,batchSendUSDC,getPoolTreasuryInfo,addPoolAllocation,resetPoolAllocation,executePoolTransfers,batchAddPoolAllocations} from './src/api/controllers/CashBackContractController.js';
+import {getERC20Balance,depositToPool,withdrawUSDC,pool_getERC20Balance,batchSendUSDC,getPoolTreasuryInfo,addPoolAllocation,resetPoolAllocation,executePoolTransfers,batchAddPoolAllocations} from './src/api/controllers/CashBackContractController.js';
 
 
 
@@ -101,6 +101,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
   
   // stripe
+  app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
 
   app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
   app.get("/pools/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
@@ -112,7 +113,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
 
-
+  app.get('/pools/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
   app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
   app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);

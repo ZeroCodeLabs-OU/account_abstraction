@@ -84,6 +84,85 @@ export const getERC20Balance = async (req, res) => {
     }
   };
   
+  export const pool_getERC20Balance = async (req, res) => {
+    const { smartcontract,tokenAddress, network } = req.body;
+    const { wallet_data } = req.auth;
+    
+    if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
+      return res.status(400).json({ error: 'Invalid encrypted wallet data' });
+    }
+  
+    if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
+      return res.status(400).json({ error: 'Invalid ERC20 token address' });
+    }
+  
+    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    }
+  
+    try {
+      const { signer, config } = getSigner_network(wallet_data, network);
+      
+      if (!signer || !ethers.isAddress(signer.address)) {
+        console.error('Invalid or undefined signer address:', signer);
+        return res.status(400).json({ error: 'Invalid or undefined signer address' });
+      }
+  
+      const paymaster = await createPaymaster({
+        paymasterUrl: config.PAYMASTER_URL,
+        strictMode: true,
+      });
+  
+      const biconomySmartAccount = await createSmartAccountClient({
+        signer,
+        paymaster,
+        bundlerUrl: config.BUNDLER_URL,
+      });
+  
+      // Get the smart account address
+      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+  
+      // ERC20 token contract interface
+      const erc20ABI = [
+        "function balanceOf(address account) view returns (uint256)",
+        "function decimals() view returns (uint8)",
+        "function symbol() view returns (string)"
+      ];
+  
+      // Create provider and contract instances
+      const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+      const tokenContract = new ethers.Contract(tokenAddress, erc20ABI, provider);
+  
+      // Fetch token details and balance
+      const [balance, decimals, symbol] = await Promise.all([
+        tokenContract.balanceOf(smartcontract),
+        tokenContract.decimals(),
+        tokenContract.symbol()
+      ]);
+  
+      // Convert balance to human readable format and ensure it's a string
+      const formattedBalance = ethers.formatUnits(balance, decimals);
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          smartAccountAddress,
+          tokenAddress,
+          symbol,
+          balance: formattedBalance,
+          rawBalance: balance.toString(), // Convert BigInt to string
+          decimals: Number(decimals) // Convert to regular number
+        }
+      });
+  
+    } catch (error) {
+      console.error('Error fetching ERC20 balance:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        details: error.message
+      });
+    }
+  }
   
   const USDC_ABI = [
     "function transfer(address to, uint256 amount) external returns (bool)",

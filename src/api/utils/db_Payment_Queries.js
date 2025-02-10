@@ -938,6 +938,25 @@ static async getRewardsForInvoice(poolId, invoiceId) {
       throw error;
   }
 }
+static async getPendingBatchRewards() {
+  const query = `
+      SELECT DISTINCT ON (i.invoice_id)
+          i.invoice_id,
+          i.pool_id,
+          t.transaction_id,
+          t.payout_id,
+          t.settlement_datetime,
+          pr.metadata
+      FROM payment_system.invoices i
+      JOIN payment_system.transfers t ON t.invoice_id = i.invoice_id
+      JOIN payment_system.pool_rewards pr ON pr.invoice_id = i.invoice_id
+      WHERE t.payout_id IS NOT NULL 
+      AND t.treasury_withdrawn = false
+      AND pr.calculated_reward IS NOT NULL
+      ORDER BY i.invoice_id, i.created_at DESC;
+  `;
+  return (await pool.query(query)).rows;
+}
 static async getPaidInvoices({ pool_id, limit, offset }) {
   const client = await pool.connect();
   try {

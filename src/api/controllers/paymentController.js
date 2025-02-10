@@ -40,26 +40,84 @@ async function retryOperation(operation, maxRetries = MAX_RETRIES) {
   throw lastError;
 }
 async function getUSDCExchangeRate(currency) {
-  try {
-      const response = await axios.get(
-          `https://api.coingecko.com/api/v3/simple/price`, {
-              params: {
-                  ids: 'usd-coin',
-                  vs_currencies: currency
+  const maxRetries = 3;
+  const baseDelay = 1000;
+  
+  // Define API sources
+  const apis = [
+      {
+          name: 'CoinGecko',
+          fetch: async () => {
+              const response = await axios.get(
+                  `https://api.coingecko.com/api/v3/simple/price`,
+                  {
+                      params: {
+                          ids: 'usd-coin',
+                          vs_currencies: currency.toLowerCase()
+                      },
+                      timeout: 5000
+                  }
+              );
+              if (!response.data['usd-coin'] || !response.data['usd-coin'][currency.toLowerCase()]) {
+                  throw new Error('Invalid response format');
               }
+              return 1 / response.data['usd-coin'][currency.toLowerCase()];
           }
-      );
-
-      if (!response.data['usd-coin'] || !response.data['usd-coin'][currency]) {
-          throw new Error(`Unable to get USDC rate for ${currency}`);
+      },
+      {
+          name: 'CryptoCompare',
+          fetch: async () => {
+              const response = await axios.get(
+                  `https://min-api.cryptocompare.com/data/price`,
+                  {
+                      params: {
+                          fsym: 'USDC',
+                          tsyms: currency.toUpperCase()
+                      },
+                      timeout: 5000
+                  }
+              );
+              if (!response.data || !response.data[currency.toUpperCase()]) {
+                  throw new Error('Invalid response format');
+              }
+              return 1 / response.data[currency.toUpperCase()];
+          }
       }
+  ];
 
-      // Return the inverse rate since we want currency -> USDC
-      return 1 / response.data['usd-coin'][currency];
-  } catch (error) {
-      throw new Error(`Failed to fetch USDC exchange rate: ${error.message}`);
+  // Try each API with retries
+  for (const api of apis) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+              const rate = await api.fetch();
+              console.log(`Exchange rate fetched from ${api.name}: ${rate} : ${currency}`);
+              return rate;
+              
+          } catch (error) {
+              const isRateLimit = error.response?.status === 429;
+              const isLastAttempt = attempt === maxRetries;
+              const isLastAPI = api === apis[apis.length - 1];
+
+              // Only throw if this is the last attempt of the last API
+              if (isLastAttempt && isLastAPI) {
+                  throw new Error(`All APIs failed to fetch USDC exchange rate: ${error.message}`);
+              }
+
+              // Calculate delay for retry
+              const delay = isRateLimit 
+                  ? baseDelay * Math.pow(2, attempt)
+                  : baseDelay;
+
+              console.warn(`${api.name} attempt ${attempt} failed: ${error.message}`);
+              console.warn(`Waiting ${delay}ms before retry...`);
+              
+              await new Promise(resolve => setTimeout(resolve, delay));
+          }
+      }
+      console.warn(`All attempts failed for ${api.name}, trying next API source...`);
   }
 }
+
 async function handlePaymentIntentSucceeded(paymentIntent) {
   try {
     console.log('Processing payment intent:', paymentIntent);
@@ -1000,6 +1058,80 @@ async updatePoolEmail(req, res) {
           success: false,
           error: error.message
       });
+  }
+}
+,
+async getCalculatedRewards(req, res) {
+  try {
+      const rewards = await PoolQueries.getPendingBatchRewards();
+      if (!rewards?.length) return res.status(200).json({ success: false, error: 'No rewards found' });
+
+      const USDC_DECIMALS = 6;
+
+      // Extract unique currencies from rewards
+      const uniqueCurrencies = [...new Set(
+          rewards.map(r => r.metadata.invoice_currency.toLowerCase())
+      )];
+
+      // Fetch all exchange rates at once and store in a map
+      const exchangeRates = new Map();
+      await Promise.all(
+          uniqueCurrencies.map(async currency => {
+              if (currency === 'usdc') {
+                  exchangeRates.set(currency, 1);
+                  return;
+              }
+              try {
+                  const rate = await getUSDCExchangeRate(currency);
+                  exchangeRates.set(currency, rate);
+              } catch (error) {
+                  console.error(`Failed to get exchange rate for ${currency}:`, error);
+                  throw error; // Re-throw to handle in the main catch block
+              }
+          })
+      );
+
+      const convertToStandardUnit = (amount, curr) => {
+          const zeroDecimalCurrencies = ["bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"];
+          const threeDecimalCurrencies = ["bhd", "jod", "kwd", "omr", "tnd"];
+          if (zeroDecimalCurrencies.includes(curr)) return amount;
+          if (threeDecimalCurrencies.includes(curr)) return amount / 1000;
+          return amount / 100;
+      };
+
+      const formattedRewards = rewards.map(r => {
+          const metadata = r.metadata;
+          const currency = metadata.invoice_currency.toLowerCase();
+          const exchangeRate = exchangeRates.get(currency);
+          
+          const distributionAmount = convertToStandardUnit(metadata.reward_calculation.distribution_amount, currency);
+          const usdcAmount = Number((distributionAmount * exchangeRate).toFixed(USDC_DECIMALS));
+          
+          return {
+              invoice_id: r.invoice_id,
+              pool_id: r.pool_id,
+              payout_id: r.payout_id,
+              transaction_id: r.transaction_id,
+              total_calculated_usdc: usdcAmount,
+              settlement_datetime: r.settlement_datetime,
+              reward_details: {
+                  currency: currency.toUpperCase(),
+                  invoice_amount: convertToStandardUnit(metadata.reward_calculation.original_amount, currency),
+                  original_amount: convertToStandardUnit(metadata.reward_calculation.original_amount, currency),
+                  distribution_amount: distributionAmount,
+                  platform_fee_amount: convertToStandardUnit(metadata.platform_fee_amount, currency),
+                  platform_fee_percentage: metadata.platform_fee_percentage,
+                  exchange_rate: exchangeRate,
+                  exchange_rate_date: new Date()
+              }
+          };
+      });
+
+      res.json({ success: true, data: formattedRewards });
+
+  } catch (error) {
+      console.error('Error calculating batch rewards:', error);
+      res.status(500).json({ success: false, error: error.message });
   }
 }
 ,
