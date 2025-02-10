@@ -1196,7 +1196,14 @@ async initializePoolRewards(req, res) {
               error: 'pool_id, invoice_id, and rewards array are required'
           });
       }
-
+      const reward_detail = await PoolQueries.getRewardsForInvoice(pool_id, invoice_id);
+      console.log("reward_detail",reward_detail)
+      if (reward_detail?.length) {
+          return res.status(200).json({
+              success: false,
+              error: 'Pool rewards already initialized for this invoice'
+          });
+      }
       // Validate total percentage doesn't exceed 100%
       const totalPercentage = rewards.reduce((sum, r) => sum + r.reward_percentage, 0);
       if (Math.abs(totalPercentage - 100) > 0.01) { // Using 0.01 for floating point comparison
