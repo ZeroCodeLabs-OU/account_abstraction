@@ -535,7 +535,16 @@ static async getPendingRewards_pool(poolId, invoiceId) {
       throw error;
   }
 }
-
+static async getPoolSmartAccount(poolId) {
+  const query = `
+      SELECT smart_account_address
+      FROM payment_system.pools
+      WHERE pool_id = $1;
+  `;
+  const values = [poolId];
+  const result = await pool.query(query, values);
+  return result.rows[0];
+}
 static async getPendingRewards_user(poolId, invoiceId) {
   const query = `
       SELECT 

@@ -216,7 +216,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           paymasterUrl: config.PAYMASTER_URL,
           strictMode: true,
       });
-
+      
       const biconomySmartAccount = await createSmartAccountClient({
           signer,
           paymaster,
@@ -225,7 +225,14 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
 
       const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
       console.log('Smart Account Address:', smartAccountAddress);
-
+      const pool_smart_account = await PoolQueries.getPoolSmartAccount(pool_id);
+      console.log('Pool Smart Account Address:', pool_smart_account);
+      if (pool_smart_account.smart_account_address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
+        return {
+          success: false,
+          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${smartAccountAddress.toLowerCase()}`
+        };
+      }
       // Initialize USDC contract
       const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
       const usdcContract = new ethers.Contract(usdc_token_address, USDC_ABI, provider);
@@ -270,16 +277,17 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
 
           totalAmount += amount;
       }
-
+      
       console.log('Balance check:', {
           required: ethers.formatUnits(totalAmount, USDC_ONCHAIN_DECIMALS),
           available: ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS),
           requiredRaw: totalAmount.toString(),
-          availableRaw: balance.toString()
+          availableRaw: balance.toString(),
+          smartAccountAddress: smartAccountAddress
       });
 
       if (balance < totalAmount) {
-          throw new Error(`Insufficient balance. Required: ${ethers.formatUnits(totalAmount, USDC_ONCHAIN_DECIMALS)}, Available: ${ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS)}`);
+          throw new Error(`Insufficient balance. Required: ${ethers.formatUnits(totalAmount)}, Available: ${ethers.formatUnits(balance)}`);
       }
 
       // Execute batch transaction
@@ -1342,6 +1350,7 @@ async  distributePoolRewards(req, res) {
               error: 'No pending rewards found, please check treasury_withdraw status'
           });
       }
+
 
       const pendingRewards = await PoolQueries.getPendingRewards(pool_id, invoice_id);
       
