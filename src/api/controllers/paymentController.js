@@ -224,13 +224,20 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       });
 
       const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-      console.log('Smart Account Address:', smartAccountAddress);
+      console.log('Original Smart Account Address:', smartAccountAddress);
+      
+      // Normalize to proper EIP-55 checksum format
+      const normalizedSmartAccountAddress = ethers.utils.getAddress(smartAccountAddress.toLowerCase());
+      console.log('Normalized Smart Account Address:', normalizedSmartAccountAddress);
+      
       const pool_smart_account = await PoolQueries.getPoolSmartAccount(pool_id);
-      console.log('Pool Smart Account Address:', pool_smart_account);
-      if (pool_smart_account.smart_account_address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
+      console.log('Pool Smart Account Address:', pool_smart_account.smart_account_address);
+      
+      // Compare using lowercase to be safe
+      if (pool_smart_account.smart_account_address.toLowerCase() !== normalizedSmartAccountAddress.toLowerCase()) {
         return {
           success: false,
-          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${smartAccountAddress.toLowerCase()}`
+          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${normalizedSmartAccountAddress.toLowerCase()}`
         };
       }
       // Initialize USDC contract
@@ -1204,14 +1211,35 @@ async initializePoolRewards(req, res) {
               error: 'pool_id, invoice_id, and rewards array are required'
           });
       }
+      
       const reward_detail = await PoolQueries.getRewardsForInvoice(pool_id, invoice_id);
-      console.log("reward_detail",reward_detail)
       if (reward_detail?.length) {
           return res.status(200).json({
               success: false,
               error: 'Pool rewards already initialized for this invoice'
           });
       }
+      
+      // Simple Ethereum address validation
+      const ethereumAddressRegex = /^0x[a-fA-F0-9]{40}$/;
+      
+      for (const reward of rewards) {
+          if (!reward.smart_account_address) {
+              return res.status(400).json({
+                  success: false,
+                  error: 'Each reward must have a smart_account_address'
+              });
+          }
+          
+          // Check basic Ethereum address format
+          if (!ethereumAddressRegex.test(reward.smart_account_address)) {
+              return res.status(400).json({
+                  success: false,
+                  error: `Invalid smart account address format: ${reward.smart_account_address}`
+              });
+          }
+      }
+      
       // Validate total percentage doesn't exceed 100%
       const totalPercentage = rewards.reduce((sum, r) => sum + r.reward_percentage, 0);
       if (Math.abs(totalPercentage - 100) > 0.01) { // Using 0.01 for floating point comparison
@@ -1563,10 +1591,14 @@ async processAndDistributeRewards(req, res) {
           acc[reward.pool_smart_account] += parseFloat(reward.calculated_reward_usdc);
           return acc;
       }, {});
+      const getChecksumAddress = (address) => {
+        return ethers.getAddress(address.toLowerCase());
+      };
 
+      console.log('Aggregated rewards:', aggregatedRewards);
       const consolidatedRewards = Object.entries(aggregatedRewards).map(([address, total]) => ({
-          address,
-          amount: formatUSDC(total)
+        address: getChecksumAddress(address),
+        amount: formatUSDC(total)
       }));
 
       console.log('Consolidated rewards:', consolidatedRewards);
