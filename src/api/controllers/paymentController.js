@@ -179,7 +179,6 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
     throw error;
   }
 }
-
 async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, network, usdc_token_address) {
   const DB_DECIMALS = 10;
   const USDC_ONCHAIN_DECIMALS = 16;
@@ -223,52 +222,67 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           bundlerUrl: config.BUNDLER_URL,
       });
 
-      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();      
-      
+      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
+      console.log('Original Smart Account Address:', smartAccountAddress);
+
+      // Normalize to proper EIP-55 checksum format
+      const normalizedSmartAccountAddress = ethers.getAddress(smartAccountAddress.toLowerCase());
+      console.log('Normalized Smart Account Address:', normalizedSmartAccountAddress);
+
       const pool_smart_account = await PoolQueries.getPoolSmartAccount(pool_id);
-    
-      
+      console.log('Pool Smart Account Address:', pool_smart_account.smart_account_address);
+
       // Compare using lowercase to be safe
-      if (pool_smart_account.smart_account_address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
+      if (pool_smart_account.smart_account_address.toLowerCase() !== normalizedSmartAccountAddress.toLowerCase()) {
         return {
           success: false,
-          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${smartAccountAddress.toLowerCase()}`
+          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${normalizedSmartAccountAddress.toLowerCase()}`
         };
       }
+      
       // Initialize USDC contract
       const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
       const usdcContract = new ethers.Contract(usdc_token_address, USDC_ABI, provider);
-      const balance = await usdcContract.balanceOf(smartAccountAddress);
+      const balance = await usdcContract.balanceOf(normalizedSmartAccountAddress);
 
       console.log('Initial balance:', ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS));
 
-      // Aggregate rewards by recipient
+      // Normalize addresses and aggregate rewards by recipient
       const aggregatedRewards = pendingRewards.reduce((acc, reward) => {
-        if (!acc[reward.smart_account_address]) {
-            acc[reward.smart_account_address] = BigInt(0);
+        // Normalize address before using as a key
+        const normalizedAddress = ethers.getAddress(reward.smart_account_address.toLowerCase());
+        
+        if (!acc[normalizedAddress]) {
+            acc[normalizedAddress] = BigInt(0);
         }
         
-        console.log('Processing reward:', reward);
+        console.log('Processing reward:', {
+            ...reward,
+            normalized_address: normalizedAddress
+        });
         
         const amountE8 = ethers.parseUnits(reward.calculated_reward_usdc, DB_DECIMALS); 
         const amountE18 = amountE8 * CONVERSION_FACTOR; // Convert to 18 decimals
-        acc[reward.smart_account_address] += amountE18;
+        acc[normalizedAddress] += amountE18;
         return acc;
-    }, {});
+      }, {});
 
-      // Prepare transactions
+      // Prepare transactions with normalized addresses
       const transactions = [];
       let totalAmount = BigInt(0);
 
       for (const [address, amount] of Object.entries(aggregatedRewards)) {
+          // Normalize address again to be safe
+          const normalizedAddress = ethers.getAddress(address.toLowerCase());
+          
           console.log('Processing transfer:', {
-              address,
+              address: normalizedAddress,
               originalAmount: ethers.formatUnits(amount, USDC_ONCHAIN_DECIMALS),
               rawAmount: amount.toString(),
           });
 
           const transferData = usdcContract.interface.encodeFunctionData("transfer", [
-              address,
+              normalizedAddress, // Use normalized address
               amount // Already in 18 decimals
           ]);
 
@@ -285,7 +299,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           available: ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS),
           requiredRaw: totalAmount.toString(),
           availableRaw: balance.toString(),
-          smartAccountAddress: smartAccountAddress
+          smartAccountAddress: normalizedSmartAccountAddress
       });
 
       if (balance < totalAmount) {
@@ -310,20 +324,20 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       // Finalize the distribution
       await PoolQueries.finalizeRewardDistribution(
         transactionHash,
-          pool_id,
-          invoice_id
+        pool_id,
+        invoice_id
       );
-      //talk with stan about what he would like in return 
+      
       return {
           success: true,
           message: "Reward distribution completed successfully",
           data: {
               transactionHash,
-              from: smartAccountAddress,
+              from: normalizedSmartAccountAddress,
               totalAmount: ethers.formatUnits(totalAmount, 18),
               recipientCount: Object.keys(aggregatedRewards).length,
               transfers: Object.entries(aggregatedRewards).map(([address, amount]) => ({
-                  address,
+                  address: ethers.getAddress(address.toLowerCase()), // Normalize here too
                   amount: ethers.formatUnits(amount, 18)
               }))
           }
@@ -345,7 +359,6 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       };
   }
 }
-
 
 
 
