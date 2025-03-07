@@ -223,21 +223,16 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           bundlerUrl: config.BUNDLER_URL,
       });
 
-      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
-      console.log('Original Smart Account Address:', smartAccountAddress);
-      
-      // Normalize to proper EIP-55 checksum format
-      const normalizedSmartAccountAddress = ethers.utils.getAddress(smartAccountAddress.toLowerCase());
-      console.log('Normalized Smart Account Address:', normalizedSmartAccountAddress);
+      const smartAccountAddress = await biconomySmartAccount.getAccountAddress();      
       
       const pool_smart_account = await PoolQueries.getPoolSmartAccount(pool_id);
-      console.log('Pool Smart Account Address:', pool_smart_account.smart_account_address);
+    
       
       // Compare using lowercase to be safe
-      if (pool_smart_account.smart_account_address.toLowerCase() !== normalizedSmartAccountAddress.toLowerCase()) {
+      if (pool_smart_account.smart_account_address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
         return {
           success: false,
-          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${normalizedSmartAccountAddress.toLowerCase()}`
+          error: `Smart Account Address does not match. pool_smart_account: ${pool_smart_account.smart_account_address.toLowerCase()}, provided_smart_account: ${smartAccountAddress.toLowerCase()}`
         };
       }
       // Initialize USDC contract
