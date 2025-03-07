@@ -277,7 +277,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           
           console.log('Processing transfer:', {
               address: normalizedAddress,
-              originalAmount: ethers.formatUnits(amount, USDC_ONCHAIN_DECIMALS),
+              originalAmount: ethers.formatUnits(amount, 18),
               rawAmount: amount.toString(),
           });
 
@@ -295,8 +295,8 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       }
       
       console.log('Balance check:', {
-          required: ethers.formatUnits(totalAmount, USDC_ONCHAIN_DECIMALS),
-          available: ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS),
+          required: ethers.formatUnits(totalAmount, 18),
+          available: ethers.formatUnits(balance, 18),
           requiredRaw: totalAmount.toString(),
           availableRaw: balance.toString(),
           smartAccountAddress: normalizedSmartAccountAddress
@@ -1609,7 +1609,6 @@ async processAndDistributeRewards(req, res) {
         amount: formatUSDC(total)
       }));
 
-      console.log('Consolidated rewards:', consolidatedRewards);
 
       // Step 2: Setup smart account
       const { signer, config } = getSigner_network(wallet_data, network);
@@ -1667,7 +1666,6 @@ async processAndDistributeRewards(req, res) {
                       consolidatedRewards.map(r => totalRequired)
                   ]);
 
-              console.log('Setting allowances:', consolidatedRewards);
 
               const allowanceTx = {
                   to: distributor_contract_address,
