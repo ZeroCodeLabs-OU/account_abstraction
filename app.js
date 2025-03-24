@@ -82,14 +82,12 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
   // get erc20 balance
-  app.post('/get-erc20-balance', authenticateToken, getERC20Balance);
   // withdraw usdc
-  app.post('/withdraw-usdc', authenticateToken, withdrawUSDC);
   // deposit to pool
   app.post('/deposit-to-pool', authenticateToken, depositToPool);
   //batch transfer
   app.post('/batch-transfer',authenticateToken, batchSendUSDC);
-
+  
   // Operator functions
   app.post('/pool/add-allocation',authenticateToken, addPoolAllocation);
   app.post('/pool/batch-add-allocations',authenticateToken, batchAddPoolAllocations);
@@ -98,21 +96,23 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
 
   app.get('/pool/treasury-info',authenticateToken, getPoolTreasuryInfo);
-
+  
   
   // stripe
-  app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
-
+  
   app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
   app.get("/pools/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
   app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.put('/pools/update-email',authenticateToken, Payment_Controller.updatePoolEmail);
   app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
+  
+  app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
+  app.post('/get-erc20-balance', authenticateToken, pool_getERC20Balance);
   app.post('/pools/rewards/initialize',authenticateToken, Payment_Controller.initializePoolRewards);
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
-
+  
   app.get('/pools/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
   app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);

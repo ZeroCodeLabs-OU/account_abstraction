@@ -139,7 +139,7 @@ export const getERC20Balance = async (req, res) => {
         tokenContract.decimals(),
         tokenContract.symbol()
       ]);
-  
+      console.log(decimals)
       // Convert balance to human readable format and ensure it's a string
       const formattedBalance = ethers.formatUnits(balance, decimals);
       

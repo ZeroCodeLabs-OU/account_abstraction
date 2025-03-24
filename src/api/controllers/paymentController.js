@@ -180,9 +180,10 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
   }
 }
 async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, network, usdc_token_address) {
+  // USDC has 6 decimals on-chain, not 16 or 18
   const DB_DECIMALS = 10;
-  const USDC_ONCHAIN_DECIMALS = 16;
-  const CONVERSION_FACTOR = BigInt(10 ** (USDC_ONCHAIN_DECIMALS - DB_DECIMALS)); 
+  const USDC_DECIMALS = 6;
+  const CONVERSION_FACTOR = BigInt(10 ** (USDC_DECIMALS - DB_DECIMALS < 0 ? 0 : USDC_DECIMALS - DB_DECIMALS)); 
 
   console.log('Starting reward distribution for:', {
       pool_id,
@@ -245,7 +246,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       const usdcContract = new ethers.Contract(usdc_token_address, USDC_ABI, provider);
       const balance = await usdcContract.balanceOf(normalizedSmartAccountAddress);
 
-      console.log('Initial balance:', ethers.formatUnits(balance, USDC_ONCHAIN_DECIMALS));
+      console.log('Initial balance:', ethers.formatUnits(balance, USDC_DECIMALS));
 
       // Normalize addresses and aggregate rewards by recipient
       const aggregatedRewards = pendingRewards.reduce((acc, reward) => {
@@ -261,9 +262,12 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
             normalized_address: normalizedAddress
         });
         
-        const amountE8 = ethers.parseUnits(reward.calculated_reward_usdc, DB_DECIMALS); 
-        const amountE18 = amountE8 * CONVERSION_FACTOR; // Convert to 18 decimals
-        acc[normalizedAddress] += amountE18;
+        // Handle floating point precision issues by rounding to 6 decimals maximum
+        const rewardAmount = parseFloat(reward.calculated_reward_usdc).toFixed(6);
+        // Convert directly to USDC units (6 decimals)
+        const amountInUsdcUnits = ethers.parseUnits(rewardAmount, USDC_DECIMALS);
+        
+        acc[normalizedAddress] += amountInUsdcUnits;
         return acc;
       }, {});
 
@@ -277,13 +281,13 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           
           console.log('Processing transfer:', {
               address: normalizedAddress,
-              originalAmount: ethers.formatUnits(amount, 18),
+              formattedAmount: ethers.formatUnits(amount, USDC_DECIMALS),
               rawAmount: amount.toString(),
           });
 
           const transferData = usdcContract.interface.encodeFunctionData("transfer", [
               normalizedAddress, // Use normalized address
-              amount // Already in 18 decimals
+              amount // Already in USDC units (6 decimals)
           ]);
 
           transactions.push({
@@ -295,15 +299,15 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       }
       
       console.log('Balance check:', {
-          required: ethers.formatUnits(totalAmount, 18),
-          available: ethers.formatUnits(balance, 18),
+          required: ethers.formatUnits(totalAmount, USDC_DECIMALS),
+          available: ethers.formatUnits(balance, USDC_DECIMALS),
           requiredRaw: totalAmount.toString(),
           availableRaw: balance.toString(),
           smartAccountAddress: normalizedSmartAccountAddress
       });
 
       if (balance < totalAmount) {
-          throw new Error(`Insufficient balance. Required: ${ethers.formatUnits(totalAmount)}, Available: ${ethers.formatUnits(balance)}`);
+          throw new Error(`Insufficient balance. Required: ${ethers.formatUnits(totalAmount, USDC_DECIMALS)}, Available: ${ethers.formatUnits(balance, USDC_DECIMALS)}`);
       }
 
       // Execute batch transaction
@@ -317,7 +321,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
 
       const txReceipt = await txResponse.wait();
       
-      if (!txReceipt.success) {
+      if (txReceipt.success=='false') {
           throw new Error('Transaction failed to execute');
       }
 
@@ -334,11 +338,11 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           data: {
               transactionHash,
               from: normalizedSmartAccountAddress,
-              totalAmount: ethers.formatUnits(totalAmount, 18),
+              totalAmount: ethers.formatUnits(totalAmount, USDC_DECIMALS),
               recipientCount: Object.keys(aggregatedRewards).length,
               transfers: Object.entries(aggregatedRewards).map(([address, amount]) => ({
                   address: ethers.getAddress(address.toLowerCase()), // Normalize here too
-                  amount: ethers.formatUnits(amount, 18)
+                  amount: ethers.formatUnits(amount, USDC_DECIMALS)
               }))
           }
       };
@@ -1561,6 +1565,7 @@ async processAndDistributeRewards(req, res) {
       const formatUSDC = (amount) => {
           return parseFloat(amount).toFixed(6).replace(/\.?0+$/, '');
       };
+
       const rewards_without_usdc = await PoolQueries.getPendingRewardsWithoutUSDC(pool_id, invoice_id);
         if (!rewards_without_usdc?.length) {
             return res.status(200).json({
@@ -1570,7 +1575,13 @@ async processAndDistributeRewards(req, res) {
         }
 
         const exchangeRate = await getUSDCExchangeRate(rewards_without_usdc[0].currency.toLowerCase());
-        
+        const convertToStandardUnit = (amount, curr) => {
+          const zeroDecimalCurrencies = ["bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"];
+          const threeDecimalCurrencies = ["bhd", "jod", "kwd", "omr", "tnd"];
+          if (zeroDecimalCurrencies.includes(curr)) return amount;
+          if (threeDecimalCurrencies.includes(curr)) return amount / 1000;
+          return amount / 100;
+      };
         // Update rewards with USDC calculations
         await PoolQueries.updateRewardsWithUSDC({
             pool_id,
@@ -1579,9 +1590,10 @@ async processAndDistributeRewards(req, res) {
             exchange_rate_date: new Date(),
             rewards: rewards_without_usdc.map(reward => ({
                 id: reward.id,
-                calculated_reward_usdc: parseFloat(reward.calculated_reward) * exchangeRate
+                calculated_reward_usdc: parseFloat(convertToStandardUnit(reward.calculated_reward,rewards_without_usdc[0].currency.toLowerCase())) * exchangeRate
             }))
         });
+
       // Step 1: Get and validate rewards
       const rewards = await PoolQueries.getPendingRewards_pool(pool_id, invoice_id);
       if (!rewards?.length) {
@@ -1634,15 +1646,18 @@ async processAndDistributeRewards(req, res) {
       const distributorContract = new ethers.Contract(distributor_contract_address, distributorABI, provider);
 
       // Step 4: Calculate total and check contract balance
+      // Changed from 16 to 6 decimals for USDC
       const totalRequired = Object.values(aggregatedRewards).reduce((sum, amount) => {
-        return sum + ethers.parseUnits(amount.toString(), 16); 
+        // Round to 6 decimal places to avoid precision errors
+        const roundedAmount = parseFloat(amount).toFixed(6);
+        return sum + ethers.parseUnits(roundedAmount, 6);
       }, BigInt(0));
 
       const contractBalance = await distributorContract.getContractBalance();
 
       console.log("Balance check:", {
-        contractBalance: contractBalance.toString(), // Already in e18
-        totalRequired: totalRequired.toString(), // In e18
+        contractBalance: contractBalance.toString(), // Already in USDC format (6 decimals)
+        totalRequired: totalRequired.toString(), // Now correctly in USDC format (6 decimals)
       });
     
       if (contractBalance < totalRequired) {
@@ -1650,8 +1665,8 @@ async processAndDistributeRewards(req, res) {
           success: false,
           error: "Insufficient USDC in distributor contract",
           details: {
-            required: ethers.formatUnits(totalRequired, 18), // Show in readable format
-            available: ethers.formatUnits(contractBalance, 18), // Show in readable format
+            required: ethers.formatUnits(totalRequired, 6), // Changed from 18 to 6 decimals
+            available: ethers.formatUnits(contractBalance, 6), // Changed from 18 to 6 decimals
           },
         });
       }
@@ -1660,10 +1675,11 @@ async processAndDistributeRewards(req, res) {
       const retryTransaction = async (retryCount = 0) => {
           try {
               // Set bulk allowances
+              // Fixed: individual reward amounts instead of total for each recipient
               const setBulkAllowanceData = new ethers.Interface(distributorABI)
                   .encodeFunctionData("setBulkWithdrawalAllowances", [
                       consolidatedRewards.map(r => r.address),
-                      consolidatedRewards.map(r => totalRequired)
+                      consolidatedRewards.map(r => ethers.parseUnits(r.amount, 6)) // Parse each amount properly
                   ]);
 
 
@@ -1679,7 +1695,8 @@ async processAndDistributeRewards(req, res) {
               console.log('Allowance transaction sent:', allowanceResponse);
               
               const allowanceReceipt = await allowanceResponse.wait();
-              if (!allowanceReceipt.success) {
+              console.log('Allowance receipt:', allowanceReceipt);
+              if (allowanceReceipt.success=="false") {
                   throw new Error('Setting allowances failed');
               }
 
@@ -1701,7 +1718,8 @@ async processAndDistributeRewards(req, res) {
                   });
 
                   const withdrawReceipt = await withdrawResponse.wait();
-                  if (!withdrawReceipt.success) {
+                  console.log('Withdrawal receipt:', withdrawReceipt);
+                  if (withdrawReceipt.success=="false") {
                       throw new Error(`Withdrawal failed for ${reward.address}`);
                   }
 
@@ -1727,7 +1745,7 @@ async processAndDistributeRewards(req, res) {
                     withdrawals: withdrawResults.map(withdrawal => ({
                         address: withdrawal.address
                     })),
-                    total_distributed: ethers.formatUnits(totalRequired, 18)
+                    total_distributed: ethers.formatUnits(totalRequired, 6) // Changed from 18 to 6 decimals
                 }
             });
 
