@@ -242,7 +242,7 @@ export const getERC20Balance = async (req, res) => {
         });
   
         const txReceipt = await txResponse.wait();
-        if (!txReceipt.success && txReceipt.success != "true") {
+        if (txReceipt.success=="false") {
           throw new Error('Withdrawal transaction failed');
         }
   
