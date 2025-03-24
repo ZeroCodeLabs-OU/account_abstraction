@@ -108,7 +108,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
   
   app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
-  app.post('/get-erc20-balance', authenticateToken, pool_getERC20Balance);
+  app.post('/get-erc20-balance', authenticateToken, getERC20Balance);
   app.post('/pools/rewards/initialize',authenticateToken, Payment_Controller.initializePoolRewards);
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
