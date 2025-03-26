@@ -1259,9 +1259,8 @@ async initializePoolRewards(req, res) {
               error: 'Invoice not found'
           });
       }
-      // Validate total percentage doesn't exceed 100%
       const total_reward_amount = rewards.reduce((sum, r) => sum + r.reward_amount, 0);
-      if (total_reward_amount>=invoice.amount) { // Using 0.01 for floating point comparison
+      if (total_reward_amount>=invoice.amount) { 
           return res.status(400).json({
               success: false,
               error: `Total reward :${total_reward_amount} amount must be  less than  invoice amount ${invoice.amount} `
