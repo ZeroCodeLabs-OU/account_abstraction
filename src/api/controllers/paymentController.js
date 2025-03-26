@@ -1252,16 +1252,6 @@ async initializePoolRewards(req, res) {
           }
       }
       
-      // Validate total percentage doesn't exceed 100%
-      const totalPercentage = rewards.reduce((sum, r) => sum + r.reward_percentage, 0);
-      if (Math.abs(totalPercentage - 100) > 0.01) { // Using 0.01 for floating point comparison
-          return res.status(400).json({
-              success: false,
-              error: `Total reward percentage must equal exactly 100% current total percentage ${totalPercentage}`
-          });
-      }
-
-      // Check if invoice exists and is valid
       const invoice = await PoolQueries.getInvoiceDetails(invoice_id);
       if (!invoice) {
           return res.status(200).json({
@@ -1269,6 +1259,15 @@ async initializePoolRewards(req, res) {
               error: 'Invoice not found'
           });
       }
+      // Validate total percentage doesn't exceed 100%
+      const total_reward_amount = rewards.reduce((sum, r) => sum + r.reward_amount, 0);
+      if (total_reward_amount>=invoice.amount) { // Using 0.01 for floating point comparison
+          return res.status(400).json({
+              success: false,
+              error: `Total reward :${total_reward_amount} amount must be  less than  invoice amount ${invoice.amount} `
+          });
+      }
+
 
       // Verify invoice belongs to pool
       if (invoice.pool_id !== pool_id) {
@@ -1278,26 +1277,20 @@ async initializePoolRewards(req, res) {
           });
       }
 
-      // Calculate base amount after 10% reduction
-      const platformFeePercentage = 10;
-      const baseAmount = invoice.amount;
-      const platformFee = (baseAmount * platformFeePercentage) / 100;
-      const distributionAmount = baseAmount - platformFee;
+      
 
       // Create reward entries with adjusted calculations
       const createdRewards = await PoolQueries.createBulkRewards({
           pool_id,
           invoice_id,
-          invoice_amount: baseAmount,
-          distribution_amount: distributionAmount,
+          invoice_amount: invoice.amount,
+          distribution_amount: total_reward_amount,
           rewards,
           metadata: {
               invoice_currency: invoice.currency,
               invoice_paid_at: invoice.paid_at,
               payment_intent_id: invoice.payment_intent_id,
-              platform_fee_percentage: platformFeePercentage,
-              platform_fee_amount: platformFee,
-              distribution_amount: distributionAmount
+              distribution_amount: total_reward_amount
           }
       });
 
@@ -1305,15 +1298,11 @@ async initializePoolRewards(req, res) {
           success: true,
           data: {
               invoice_id,
-              base_amount: baseAmount,
-              platform_fee: platformFee,
-              distribution_amount: distributionAmount,
-              total_percentage: totalPercentage,
+              distribution_amount: total_reward_amount,
               rewards: createdRewards.map(reward => ({
                   reward_id: reward.id,
                   smart_account_address: reward.smart_account_address,
-                  reward_percentage: reward.reward_percentage,
-                  calculated_reward: reward.calculated_reward,
+                  calculated_reward: reward.reward_amount,
                   status: reward.status
               }))
           }
@@ -1485,7 +1474,6 @@ async calculateRewardUSDCAmount(req, res) {
           const rewardUsdcAmount = Number((actualRewardAmount * exchangeRate).toFixed(USDC_DECIMALS));
           return {
               smart_account_address: r.smart_account_address,
-              reward_percentage: r.reward_percentage,
               reward_amount: actualRewardAmount,
               usdc_amount: rewardUsdcAmount,
               original_amount: r.calculated_reward 

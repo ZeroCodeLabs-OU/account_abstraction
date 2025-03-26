@@ -888,13 +888,13 @@ static async createBulkRewards({ pool_id, invoice_id, invoice_amount, distributi
       const createdRewards = [];
       for (const reward of rewards) {
           // Calculate reward based on distribution_amount (90% of original)
-          const calculatedReward = (distribution_amount * reward.reward_percentage) / 100;
+          const calculatedReward = reward.reward_amount;
           
           const query = `
               INSERT INTO payment_system.pool_rewards
-              (pool_id, invoice_id, smart_account_address, reward_percentage, 
-               base_amount, calculated_reward, metadata)
-              VALUES ($1, $2, $3, $4, $5, $6, $7)
+              (pool_id, invoice_id, smart_account_address, 
+               base_amount,calculated_reward, metadata)
+              VALUES ($1, $2, $3, $4, $5,$6)
               RETURNING *;
           `;
 
@@ -902,7 +902,6 @@ static async createBulkRewards({ pool_id, invoice_id, invoice_amount, distributi
               pool_id,
               invoice_id,
               reward.smart_account_address,
-              reward.reward_percentage,
               invoice_amount, // Store original amount
               calculatedReward,
               {
@@ -910,7 +909,6 @@ static async createBulkRewards({ pool_id, invoice_id, invoice_amount, distributi
                   reward_calculation: {
                       original_amount: invoice_amount,
                       distribution_amount: distribution_amount,
-                      percentage: reward.reward_percentage,
                       calculated_reward: calculatedReward
                   }
               }
