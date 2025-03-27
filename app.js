@@ -313,7 +313,9 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
     }
   });
 
-
+  app.get('/', (req, res) => {
+    res.json('Server test working');
+  });
 
   app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
