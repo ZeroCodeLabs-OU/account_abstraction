@@ -213,14 +213,14 @@ export const getERC20Balance = async (req, res) => {
         const smartAccountAddress = await biconomySmartAccount.getAccountAddress();
   
         // Create contract instance
-        const provider = ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
+        const provider = await ethers.getDefaultProvider(config.INFURA_PROJECT_URL);
         const usdcContract = new ethers.Contract(tokenAddress, USDC_ABI, provider);
   
         // Get decimals and check balance
         const decimals = await usdcContract.decimals();
         const balance = await usdcContract.balanceOf(smartAccountAddress);
         const amountInWei = ethers.parseUnits(amount.toString(), decimals);
-  
+        
         if (balance < amountInWei) {
             return res.status(400).json({ error: 'Insufficient USDC balance' });
         }
@@ -240,17 +240,15 @@ export const getERC20Balance = async (req, res) => {
         const txResponse = await biconomySmartAccount.sendTransaction(tx, {
             paymasterServiceData: { mode: PaymasterMode.SPONSORED }
         });
-  
         const txReceipt = await txResponse.wait();
         if (txReceipt.success=="false") {
           throw new Error('Withdrawal transaction failed');
         }
-  
         res.status(200).json({
             success: true,
             message: "USDC withdrawn successfully",
             data: {
-                transactionHash: txReceipt.transactionHash,
+                transactionHash: txReceipt.receipt.transactionHash,
                 from: smartAccountAddress,
                 to: receiverAddress,
                 amount: amount.toString(),
