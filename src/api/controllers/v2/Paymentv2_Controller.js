@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { PoolQueries } from '../../utils/db_Payment_Queries.js';
-import { getSigner, getSigner_network } from '../services/biconomyService.js';
+import { getSigner, getSigner_network,get_address } from '../../services/biconomyService.js';
 import { createSmartAccountClient, createPaymaster,PaymasterMode } from '@biconomy/account';
 import { ethers } from 'ethers';
 import axios from 'axios';
@@ -774,9 +774,9 @@ export const Payment_Controller_v2 = {
             });
         }
          // Network validation
-         if (!network || (network !== 'mainnet' && network !== 'testnet')) {
+         if (!network || (network !== 'mainnet')) {
             return res.status(400).json({
-                error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.'
+                error: 'Invalid network parameter. Only "mainnet"  are allowed.'
             });
         }
 
@@ -1297,7 +1297,7 @@ async initializePoolRewards(req, res) {
           });
       }
       const total_reward_amount = rewards.reduce((sum, r) => sum + r.reward_amount, 0);
-      if (total_reward_amount>=invoice.amount) { 
+      if (total_reward_amount>invoice.amount) { 
           return res.status(400).json({
               success: false,
               error: `Total reward :${total_reward_amount} amount must be  less than  invoice amount ${invoice.amount} `
@@ -1403,10 +1403,12 @@ async createSmartAccount  (req, res)  {
   }
 },
 async  distributePoolRewards(req, res) {
-  const { pool_id, invoice_id, usdc_token_address, network } = req.body;
+  const { pool_id, invoice_id, network } = req.body;
   const { wallet_data } = req.auth;
 
   try {
+
+    
   if (!network || (network !== 'mainnet')) {
         return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
@@ -1418,6 +1420,9 @@ async  distributePoolRewards(req, res) {
           error: 'No customer found for this pool'
         });
       }
+
+      const address= await get_address(network)
+      const usdc_token_address =address.Token
       // Get pending rewards
       const rewards = await PoolQueries.getPendingRewards_user(pool_id, invoice_id);
       if (!rewards?.length) {
@@ -1612,7 +1617,7 @@ async processAndDistributeRewards(req, res) {
       }
       const address= await get_address(network)
       const usdc_token_address =address.address.Token
-      const distributor_contract_address =address.address.Distributor
+      const distributor_contract_address =address.Distributor
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
         return res.status(200).json({

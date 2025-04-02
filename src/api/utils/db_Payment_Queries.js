@@ -151,7 +151,7 @@ static async getInvoicesWithPayoutPendingTreasury(network) {
       const query = `
         INSERT INTO payment_system.pools 
         (pool_id, email, customer_id, smart_account_address,network, metadata)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5,$6)
         ON CONFLICT (pool_id) 
         DO UPDATE SET
           email = EXCLUDED.email,

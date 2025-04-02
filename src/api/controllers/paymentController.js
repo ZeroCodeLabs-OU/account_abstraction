@@ -4,7 +4,7 @@ import { getSigner, getSigner_network , get_address} from '../services/biconomyS
 import { createSmartAccountClient, createPaymaster,PaymasterMode } from '@biconomy/account';
 import { ethers } from 'ethers';
 import axios from 'axios';
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(process.env.STRIPE_SECRET_TEST_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 // import {TokenDistributor} from '../utils/contracts/TokenDistributor.json';
@@ -679,8 +679,8 @@ export const Payment_Controller = {
     async  createBillingPortalSession(req, res) {
         try {
           const { pool_id, network } = req.body;
-          if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-            return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+          if (!network || ( network !== 'testnet')) {
+            return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
           }
           const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
           if (!poolInfo?.customer_id) {
@@ -775,8 +775,8 @@ export const Payment_Controller = {
                 error: 'email and pool_id are required'
             });
         }
-        if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-          return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        if (!network || ( network !== 'testnet')) {
+          return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
         }
 
         // First check if pool exists and matches provided email
@@ -1304,7 +1304,7 @@ async initializePoolRewards(req, res) {
           });
       }
       const total_reward_amount = rewards.reduce((sum, r) => sum + r.reward_amount, 0);
-      if (total_reward_amount>=invoice.amount) { 
+      if (total_reward_amount>invoice.amount) { 
           return res.status(400).json({
               success: false,
               error: `Total reward :${total_reward_amount} amount must be  less than  invoice amount ${invoice.amount} `
@@ -1410,12 +1410,12 @@ async createSmartAccount  (req, res)  {
   }
 },
 async  distributePoolRewards(req, res) {
-  const { pool_id, invoice_id, usdc_token_address, network } = req.body;
+  const { pool_id, invoice_id, network } = req.body;
   const { wallet_data } = req.auth;
   
   try {
-    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    if (!network || (network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "testnet"  are allowed.' });
     }
     
     const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1424,7 +1424,11 @@ async  distributePoolRewards(req, res) {
         success: false,
         error: 'No customer found for this pool'
       });
-    }      const rewards = await PoolQueries.getPendingRewards_user(pool_id, invoice_id);
+    }
+
+    const address= await get_address(network)
+    const usdc_token_address =address.Token
+      const rewards = await PoolQueries.getPendingRewards_user(pool_id, invoice_id);
       if (!rewards?.length) {
           return res.status(200).json({
               success: false,
@@ -1620,8 +1624,9 @@ async processAndDistributeRewards(req, res) {
         return res.status(400).json({ error: 'Invalid network parameter. Only  "testnet" are allowed.' });
       }
       const address= await get_address(network)
-      const usdc_token_address =address.address.Token
-      const distributor_contract_address =address.address.Distributor
+      console.log("address",address);
+      const usdc_token_address =address.Token
+      const distributor_contract_address =address.Distributor
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
         return res.status(200).json({
