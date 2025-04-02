@@ -29,9 +29,11 @@ import {getERC20Balance,depositToPool,withdrawUSDC,pool_getERC20Balance,batchSen
 
 
 
-import {stripeController  } from './src/api/controllers/stripeController.js';
+// import {stripeController  } from './src/api/controllers/stripeController.js';
 
 import {Payment_Controller,handleStripeWebhook   } from './src/api/controllers/paymentController.js';
+
+import {Payment_Controller_v2,handleStripeWebhook_v2   } from './src/api/controllers/v2/Paymentv2_Controller.js';
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -104,7 +106,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
   app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.put('/pools/update-email',authenticateToken, Payment_Controller.updatePoolEmail);
-  app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
+  app.get('/pools/:network/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
   
   app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
   app.post('/get-erc20-balance', authenticateToken, getERC20Balance);
@@ -113,11 +115,37 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
   
-  app.get('/pools/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
+  app.get('/pools/:network/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
-  app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
+  app.get('/invoices/:network/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
   app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);
   
+
+
+
+
+  //v2
+
+  app.post('/v2/webhook', express.raw({type: 'application/json'}), handleStripeWebhook_v2 );
+
+  app.post("/v2/pools/add-card",authenticateToken, Payment_Controller_v2.createSetupSession);//done
+  app.get("/v2/pools/:network/:pool_id/card-details",authenticateToken, Payment_Controller_v2.getPaymentMethodDetails);//done
+  app.post("/v2/pools/update-card",authenticateToken, Payment_Controller_v2.createBillingPortalSession);//done
+  app.post("/v2/pools/invoice",authenticateToken, Payment_Controller_v2.createAndChargeInvoice);//done
+  app.put('/v2/pools/update-email',authenticateToken, Payment_Controller_v2.updatePoolEmail);//done
+  app.get('/v2/pools/:network/:pool_id/invoices',authenticateToken, Payment_Controller_v2.getPaidInvoices);//done
+  
+  app.post('/v2/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );//done
+  app.post('/v2/get-erc20-balance', authenticateToken, getERC20Balance);//done
+  app.post('/v2/withdraw-usdc', authenticateToken, withdrawUSDC);//done
+  app.post('/v2/pools/rewards/initialize',authenticateToken, Payment_Controller_v2.initializePoolRewards);//done
+  app.post('/v2/pools/rewards/distribute',authenticateToken, Payment_Controller_v2.distributePoolRewards);//done
+  app.post('/v2/get-smart-account',authenticateToken, Payment_Controller_v2.createSmartAccount);//done
+  
+  app.get('/v2/pools/:network/rewards',authenticateToken, Payment_Controller_v2.getCalculatedRewards);//done
+  app.get('/v2/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller_v2.calculateRewardUSDCAmount);//done
+  app.get('/v2/invoices/:network/pending-treasury',authenticateToken, Payment_Controller_v2.getInvoicesPendingTreasury);//done
+  app.post("/v2/pools/rewards/pool-distribution",authenticateToken, Payment_Controller_v2.processAndDistributeRewards);//done
   //testing
   app.get('/payout-details/:payoutId', async (req, res) => {
     try {

@@ -1,13 +1,15 @@
 import { ethers } from 'ethers';
 import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@biconomy/account';
-import { getSigner_network } from '../services/biconomyService.js';
+import { getSigner_network,get_address } from '../services/biconomyService.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
 export const getERC20Balance = async (req, res) => {
-    const { tokenAddress, network } = req.body;
+    const { network } = req.body;
     const { wallet_data } = req.auth;
-  
+    const address =await get_address(network)
+    const smartcontract = address.address.Distributor;
+    const tokenAddress = address.address.Token;
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
@@ -85,7 +87,7 @@ export const getERC20Balance = async (req, res) => {
   };
   
   export const pool_getERC20Balance = async (req, res) => {
-    const { smartcontract,tokenAddress, network } = req.body;
+    const {  network } = req.body;
     const { wallet_data } = req.auth;
     
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
@@ -99,7 +101,10 @@ export const getERC20Balance = async (req, res) => {
     if (!network || (network !== 'mainnet' && network !== 'testnet')) {
       return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
     }
-  
+
+    const address =await get_address(network)
+    const smartcontract = address.address.Distributor;
+    const tokenAddress = address.address.Token;
     try {
       const { signer, config } = getSigner_network(wallet_data, network);
       
@@ -172,9 +177,9 @@ export const getERC20Balance = async (req, res) => {
   ];
   
   export const withdrawUSDC = async (req, res) => {
-    const { receiverAddress, amount, network, tokenAddress } = req.body;
+    const { receiverAddress, amount, network } = req.body;
     const { wallet_data } = req.auth;
-  
+   
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
         return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
@@ -190,7 +195,9 @@ export const getERC20Balance = async (req, res) => {
     if (!network || (network !== 'mainnet' && network !== 'testnet')) {
         return res.status(400).json({ error: 'Invalid network parameter' });
     }
-  
+    const address =await get_address(network)
+    const smartcontract = address.address.Distributor;
+    const tokenAddress = address.address.Token;
     if (!ethers.isAddress(tokenAddress)) {
         return res.status(400).json({ error: 'Invalid USDC token address' });
     }
