@@ -102,7 +102,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   // stripe
   
   app.post("/pools/add-card",authenticateToken, Payment_Controller.createSetupSession);
-  app.get("/pools/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
+  app.get("/pools/:network/:pool_id/card-details",authenticateToken, Payment_Controller.getPaymentMethodDetails);
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
   app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.put('/pools/update-email',authenticateToken, Payment_Controller.updatePoolEmail);
