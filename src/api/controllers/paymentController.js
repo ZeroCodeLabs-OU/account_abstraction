@@ -707,8 +707,8 @@ export const Payment_Controller = {
   // Get payment method details
   async getPaymentMethodDetails(req, res) {
     try {
-      const { pool_id,network } = req.params;
-  
+      const { pool_id } = req.params;
+      const network = 'testnet';
       if (!pool_id) {
         return res.status(400).json({
           success: false,
@@ -1100,8 +1100,8 @@ async updatePoolEmail(req, res) {
 ,
 async getCalculatedRewards(req, res) {
   try {
-      const {network}= req.params;
-    if (!network || (network !== 'testnet')) {
+        const network = 'testnet';
+        if (!network || (network !== 'testnet')) {
         return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
       
@@ -1180,9 +1180,9 @@ async getCalculatedRewards(req, res) {
 ,
 async getPaidInvoices(req, res) {
   try {
-      const { pool_id , network} = req.params;
+      const { pool_id } = req.params;
       const { limit = 10, page = 1 } = req.query;
-
+      const network = 'testnet';
       if (!pool_id) {
           return res.status(400).json({
               success: false,
@@ -1461,8 +1461,10 @@ async  distributePoolRewards(req, res) {
 },
 async calculateRewardUSDCAmount(req, res) {
   try {
-      const { pool_id, invoice_id,network } = req.params;
+      const { pool_id, invoice_id } = req.params;
       const USDC_DECIMALS = 6;
+
+      const network = 'testnet';
     if (!network || (network !== 'testnet')) {
         return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
@@ -1563,8 +1565,8 @@ async calculateRewardUSDCAmount(req, res) {
 },
 async getInvoicesPendingTreasury(req, res) {
   try {
-      const {network}= req.params;
-    if (!network || (network !== 'testnet')) {
+      const network = 'testnet';
+      if (!network || (network !== 'testnet')) {
         return res.status(400).json({ error: 'Invalid network parameter. Only  and "testnet" are allowed.' });
       }
       
