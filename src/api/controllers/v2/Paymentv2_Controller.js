@@ -1,14 +1,14 @@
 import Stripe from 'stripe';
-import { PoolQueries } from '../utils/db_Payment_Queries.js';
-import { getSigner, getSigner_network , get_address} from '../services/biconomyService.js';
+import { PoolQueries } from '../../utils/db_Payment_Queries.js';
+import { getSigner, getSigner_network,get_address } from '../../services/biconomyService.js';
 import { createSmartAccountClient, createPaymaster,PaymasterMode } from '@biconomy/account';
 import { ethers } from 'ethers';
 import axios from 'axios';
-const stripe = new Stripe(process.env.STRIPE_SECRET_TEST_KEY);
+const stripe = new Stripe(process.env.STRIPE_PRODUCTION_SECRET_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 // import {TokenDistributor} from '../utils/contracts/TokenDistributor.json';
-import TokenDistributor from "../utils/contracts/TokenDistributor.json" assert { type: "json" };
+import TokenDistributor from "../../utils/contracts/TokenDistributor.json" assert { type: "json" };
 
 const USDC_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
@@ -588,12 +588,12 @@ async function createCustomer({ pool_id, email }) {
       throw error;
     }
   }
-  export const handleStripeWebhook = async (req, res) => {
+  export const handleStripeWebhook_v2 = async (req, res) => {
     let event;
   
     try {
       // Get the webhook secret from environment variables
-      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET_PRODUCTION;
       
       // Verify the webhook signature
       event = stripe.webhooks.constructEvent(
@@ -675,12 +675,12 @@ async function clearPendingInvoiceItems(customerId) {
     }
   }
 
-export const Payment_Controller = {
+export const Payment_Controller_v2 = {
     async  createBillingPortalSession(req, res) {
         try {
-          const { pool_id, network } = req.body;
-          if (!network || ( network !== 'testnet')) {
-            return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+          const { pool_id , network} = req.body;
+          if (!network || (network !== 'mainnet')) {
+            return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" are allowed.' });
           }
           const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
           if (!poolInfo?.customer_id) {
@@ -715,11 +715,9 @@ export const Payment_Controller = {
           error: 'Pool ID is required'
         });
       }
-
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
-  
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
         return res.status(200).json({
@@ -775,8 +773,11 @@ export const Payment_Controller = {
                 error: 'email and pool_id are required'
             });
         }
-        if (!network || ( network !== 'testnet')) {
-          return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+         // Network validation
+         if (!network || (network !== 'mainnet')) {
+            return res.status(400).json({
+                error: 'Invalid network parameter. Only "mainnet"  are allowed.'
+            });
         }
 
         // First check if pool exists and matches provided email
@@ -891,10 +892,9 @@ async createAndChargeInvoice(req, res) {
               error: 'Invalid amount'
           });
       }
-      if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+      if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
-
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
           return res.status(400).json({
@@ -1032,7 +1032,7 @@ async createAndChargeInvoice(req, res) {
 },
 async updatePoolEmail(req, res) {
   try {
-      const { pool_id, new_email, network } = req.body;
+      const { pool_id, new_email,network } = req.body;
 
       // Validate inputs
       if (!pool_id || !new_email) {
@@ -1041,8 +1041,8 @@ async updatePoolEmail(req, res) {
               error: 'pool_id and new_email are required'
           });
       }
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
       // Validate email format
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1100,12 +1100,13 @@ async updatePoolEmail(req, res) {
 ,
 async getCalculatedRewards(req, res) {
   try {
-      const {network}= req.params;
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+    const {network}= req.params;
+
+  if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
       
-  
+    
       const rewards = await PoolQueries.getPendingBatchRewards(network);
       if (!rewards?.length) return res.status(200).json({ success: false, error: 'No rewards found' });
 
@@ -1180,7 +1181,7 @@ async getCalculatedRewards(req, res) {
 ,
 async getPaidInvoices(req, res) {
   try {
-      const { pool_id , network} = req.params;
+      const { pool_id,network } = req.params;
       const { limit = 10, page = 1 } = req.query;
 
       if (!pool_id) {
@@ -1189,8 +1190,8 @@ async getPaidInvoices(req, res) {
               error: 'pool_id is required'
           });
       }
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only  "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
 
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1200,8 +1201,6 @@ async getPaidInvoices(req, res) {
               error: 'Pool not found'
           });
       }
-      
-
       // Get paginated paid invoices
       const { invoices, total } = await PoolQueries.getPaidInvoices({
           pool_id,
@@ -1242,7 +1241,7 @@ async getPaidInvoices(req, res) {
 ,
 async initializePoolRewards(req, res) {
   try {
-      const { pool_id,network, invoice_id, rewards } = req.body;
+      const { pool_id, invoice_id, rewards ,network} = req.body;
 
       // Basic validations
       if (!pool_id || !invoice_id || !Array.isArray(rewards) || rewards.length === 0) {
@@ -1250,12 +1249,11 @@ async initializePoolRewards(req, res) {
               success: false,
               error: 'pool_id, invoice_id, and rewards array are required'
           });
-      } 
-
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
-      
+
+    if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
+      }
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
         return res.status(200).json({
@@ -1362,8 +1360,8 @@ async createSmartAccount  (req, res)  {
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-    if (!network || ( network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet' )) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  allowed.' });
     }
 
     // Get signer and configuration
@@ -1407,22 +1405,25 @@ async createSmartAccount  (req, res)  {
 async  distributePoolRewards(req, res) {
   const { pool_id, invoice_id, network } = req.body;
   const { wallet_data } = req.auth;
-  
-  try {
-    if (!network || (network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "testnet"  are allowed.' });
-    }
-    
-    const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
-    if (!poolInfo?.customer_id) {
-      return res.status(200).json({
-        success: false,
-        error: 'No customer found for this pool'
-      });
-    }
 
-    const address= await get_address(network)
-    const usdc_token_address =address.Token
+  try {
+
+    
+  if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
+      }
+      
+      const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
+      if (!poolInfo?.customer_id) {
+        return res.status(200).json({
+          success: false,
+          error: 'No customer found for this pool'
+        });
+      }
+
+      const address= await get_address(network)
+      const usdc_token_address =address.Token
+      // Get pending rewards
       const rewards = await PoolQueries.getPendingRewards_user(pool_id, invoice_id);
       if (!rewards?.length) {
           return res.status(200).json({
@@ -1463,8 +1464,8 @@ async calculateRewardUSDCAmount(req, res) {
   try {
       const { pool_id, invoice_id,network } = req.params;
       const USDC_DECIMALS = 6;
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet')) {
+        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
       }
       
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1563,12 +1564,11 @@ async calculateRewardUSDCAmount(req, res) {
 },
 async getInvoicesPendingTreasury(req, res) {
   try {
-      const {network}= req.params;
-    if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only  and "testnet" are allowed.' });
-      }
-      
-   
+    const {network}= req.params;
+    if (!network || (network !== 'mainnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
+    }
+    
       const invoices = await PoolQueries.getInvoicesWithPayoutPendingTreasury(network);
 
       if (!invoices || invoices.length === 0) {
@@ -1615,12 +1615,8 @@ async processAndDistributeRewards(req, res) {
               error: 'Invalid wallet data' 
           });
       }
-      if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only  "testnet" are allowed.' });
-      }
       const address= await get_address(network)
-      console.log("address",address);
-      const usdc_token_address =address.Token
+      const usdc_token_address =address.address.Token
       const distributor_contract_address =address.Distributor
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {

@@ -1,1476 +1,1476 @@
-import Stripe from 'stripe';
-import { PoolQueries } from '../utils/dbQueries.js';
+// import Stripe from 'stripe';
+// import { PoolQueries } from '../utils/dbQueries.js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Constants and Configuration
-const MAX_RETRIES = 3;
-const BASE_DELAY = 2000;
+// // Constants and Configuration
+// const MAX_RETRIES = 3;
+// const BASE_DELAY = 2000;
 
-const WEBHOOK_PRIORITIES = {
-  'checkout.session.completed': 1,
-  'customer.subscription.created': 2,
-  'invoice.paid': 3,
-  'customer.subscription.updated': 4,
-  'payout.paid': 5
-};
-// Helper function to validate and parse different date formats
-function parseBillingStartDate(dateInput) {
-  let startDate;
+// const WEBHOOK_PRIORITIES = {
+//   'checkout.session.completed': 1,
+//   'customer.subscription.created': 2,
+//   'invoice.paid': 3,
+//   'customer.subscription.updated': 4,
+//   'payout.paid': 5
+// };
+// // Helper function to validate and parse different date formats
+// function parseBillingStartDate(dateInput) {
+//   let startDate;
   
-  // Case 1: Date string (YYYY-MM-DD)
-  if (typeof dateInput === 'string') {
-    if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      startDate = new Date(dateInput);
-    } else {
-      throw new Error('Invalid date string format. Use YYYY-MM-DD');
-    }
-  }
-  // Case 2: Unix timestamp (in seconds)
-  else if (Number.isInteger(dateInput) && dateInput.toString().length === 10) {
-    startDate = new Date(dateInput * 1000);
-  }
-  // Case 3: JavaScript timestamp (in milliseconds)
-  else if (Number.isInteger(dateInput) && dateInput.toString().length === 13) {
-    startDate = new Date(dateInput);
-  }
-  // Case 4: Date object
-  else if (dateInput instanceof Date) {
-    startDate = dateInput;
-  }
-  else {
-    throw new Error('Invalid date format');
-  }
+//   // Case 1: Date string (YYYY-MM-DD)
+//   if (typeof dateInput === 'string') {
+//     if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+//       startDate = new Date(dateInput);
+//     } else {
+//       throw new Error('Invalid date string format. Use YYYY-MM-DD');
+//     }
+//   }
+//   // Case 2: Unix timestamp (in seconds)
+//   else if (Number.isInteger(dateInput) && dateInput.toString().length === 10) {
+//     startDate = new Date(dateInput * 1000);
+//   }
+//   // Case 3: JavaScript timestamp (in milliseconds)
+//   else if (Number.isInteger(dateInput) && dateInput.toString().length === 13) {
+//     startDate = new Date(dateInput);
+//   }
+//   // Case 4: Date object
+//   else if (dateInput instanceof Date) {
+//     startDate = dateInput;
+//   }
+//   else {
+//     throw new Error('Invalid date format');
+//   }
 
-  // Validate date is valid
-  if (isNaN(startDate.getTime())) {
-    throw new Error('Invalid date');
-  }
+//   // Validate date is valid
+//   if (isNaN(startDate.getTime())) {
+//     throw new Error('Invalid date');
+//   }
 
-  // Validate date is in the future
-  if (startDate <= new Date()) {
-    throw new Error('Start date must be in the future');
-  }
+//   // Validate date is in the future
+//   if (startDate <= new Date()) {
+//     throw new Error('Start date must be in the future');
+//   }
 
-  // Return Unix timestamp for Stripe
-  return Math.floor(startDate.getTime() / 1000);
-}
-// Webhook Queue Manager
-class WebhookQueueManager {
-  constructor() {
-    this.completedWebhooks = new Set();
-    this.pendingWebhooks = new Map();
-    this.processingWebhooks = new Set();
-  }
+//   // Return Unix timestamp for Stripe
+//   return Math.floor(startDate.getTime() / 1000);
+// }
+// // Webhook Queue Manager
+// class WebhookQueueManager {
+//   constructor() {
+//     this.completedWebhooks = new Set();
+//     this.pendingWebhooks = new Map();
+//     this.processingWebhooks = new Set();
+//   }
 
-  async addToQueue(eventType, sessionId, handler) {
-    const key = `${eventType}:${sessionId}`;
-    if (!this.processingWebhooks.has(key)) {
-      this.processingWebhooks.add(key);
-      try {
-        await handler();
-        this.completedWebhooks.add(key);
-      } finally {
-        this.processingWebhooks.delete(key);
-      }
-    }
-  }
-}
+//   async addToQueue(eventType, sessionId, handler) {
+//     const key = `${eventType}:${sessionId}`;
+//     if (!this.processingWebhooks.has(key)) {
+//       this.processingWebhooks.add(key);
+//       try {
+//         await handler();
+//         this.completedWebhooks.add(key);
+//       } finally {
+//         this.processingWebhooks.delete(key);
+//       }
+//     }
+//   }
+// }
 
-const queueManager = new WebhookQueueManager();
+// const queueManager = new WebhookQueueManager();
 
-// Utility Functions
-const logWebhookProgress = (eventType, status, details = {}) => {
-  console.log(`Webhook ${eventType} ${status}:`, {
-    timestamp: new Date().toISOString(),
-    ...details
-  });
-};
+// // Utility Functions
+// const logWebhookProgress = (eventType, status, details = {}) => {
+//   console.log(`Webhook ${eventType} ${status}:`, {
+//     timestamp: new Date().toISOString(),
+//     ...details
+//   });
+// };
 
-async function retryOperation(operation, operationName, maxRetries = MAX_RETRIES) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logWebhookProgress(operationName, 'attempt', { attempt });
-      return await operation();
-    } catch (error) {
-      const delay = Math.min(BASE_DELAY * Math.pow(2, attempt - 1), 10000);
-      logWebhookProgress(operationName, 'failed', { 
-        attempt,
-        error: error.message,
-        nextRetryIn: delay 
-      });
+// async function retryOperation(operation, operationName, maxRetries = MAX_RETRIES) {
+//   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+//     try {
+//       logWebhookProgress(operationName, 'attempt', { attempt });
+//       return await operation();
+//     } catch (error) {
+//       const delay = Math.min(BASE_DELAY * Math.pow(2, attempt - 1), 10000);
+//       logWebhookProgress(operationName, 'failed', { 
+//         attempt,
+//         error: error.message,
+//         nextRetryIn: delay 
+//       });
       
-      if (attempt === maxRetries) throw error;
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-}
+//       if (attempt === maxRetries) throw error;
+//       await new Promise(resolve => setTimeout(resolve, delay));
+//     }
+//   }
+// }
 
-async function ensurePoolExists(poolId, poolData) {
-  if (!poolId) {
-    throw new Error('Pool ID is required');
-  }
+// async function ensurePoolExists(poolId, poolData) {
+//   if (!poolId) {
+//     throw new Error('Pool ID is required');
+//   }
 
-  try {
-    const existingPool = await PoolQueries.executeQuery(
-      'SELECT 1 FROM payment_system.pools WHERE pool_id = $1',
-      [poolId]
-    );
+//   try {
+//     const existingPool = await PoolQueries.executeQuery(
+//       'SELECT 1 FROM payment_system.pools WHERE pool_id = $1',
+//       [poolId]
+//     );
 
-    if (existingPool.length === 0) {
-      if (!poolData) {
-        throw new Error(`Pool ${poolId} not found and no data provided`);
-      }
+//     if (existingPool.length === 0) {
+//       if (!poolData) {
+//         throw new Error(`Pool ${poolId} not found and no data provided`);
+//       }
 
-      await PoolQueries.createOrUpdatePool({
-        pool_id: poolId,
-        owner_id: poolData.owner_id,
-        username: poolData.username,
-        email: poolData.email,
-        currency: poolData.currency,
-        metadata: poolData.metadata || {}
-      });
+//       await PoolQueries.createOrUpdatePool({
+//         pool_id: poolId,
+//         owner_id: poolData.owner_id,
+//         username: poolData.username,
+//         email: poolData.email,
+//         currency: poolData.currency,
+//         metadata: poolData.metadata || {}
+//       });
 
-      // Verify pool creation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const verifyPool = await PoolQueries.executeQuery(
-        'SELECT 1 FROM payment_system.pools WHERE pool_id = $1',
-        [poolId]
-      );
+//       // Verify pool creation
+//       await new Promise(resolve => setTimeout(resolve, 1000));
+//       const verifyPool = await PoolQueries.executeQuery(
+//         'SELECT 1 FROM payment_system.pools WHERE pool_id = $1',
+//         [poolId]
+//       );
 
-      if (verifyPool.length === 0) {
-        throw new Error(`Failed to create pool ${poolId}`);
-      }
-    }
+//       if (verifyPool.length === 0) {
+//         throw new Error(`Failed to create pool ${poolId}`);
+//       }
+//     }
 
-    return true;
-  } catch (error) {
-    logWebhookProgress('ensurePoolExists', 'failed', { poolId, error: error.message });
-    throw error;
-  }
-}
-async function createCustomer({ pool_id, email, name }) {
-  try {
-    // Validate required fields
-    if (!pool_id || !email) {
-      throw new Error('pool_id and email are required');
-    }
+//     return true;
+//   } catch (error) {
+//     logWebhookProgress('ensurePoolExists', 'failed', { poolId, error: error.message });
+//     throw error;
+//   }
+// }
+// async function createCustomer({ pool_id, email, name }) {
+//   try {
+//     // Validate required fields
+//     if (!pool_id || !email) {
+//       throw new Error('pool_id and email are required');
+//     }
 
-    // Check if a customer with the same email and pool_id exists
-    const customers = await stripe.customers.list({
-      email: email
-    });
+//     // Check if a customer with the same email and pool_id exists
+//     const customers = await stripe.customers.list({
+//       email: email
+//     });
 
-    const existingCustomer = customers.data.find(
-      (customer) => customer.metadata.pool_id === pool_id
-    );
+//     const existingCustomer = customers.data.find(
+//       (customer) => customer.metadata.pool_id === pool_id
+//     );
 
-    if (existingCustomer) {
-      return {
-        customerId: existingCustomer.id,
-        existing: true
-      };
-    }
+//     if (existingCustomer) {
+//       return {
+//         customerId: existingCustomer.id,
+//         existing: true
+//       };
+//     }
 
-    // Create a new customer if no match is found
-    const customer = await stripe.customers.create({
-      email,
-      name,
-      metadata: {
-        pool_id,
-        registrationDate: new Date().toISOString()
-      }
-    });
+//     // Create a new customer if no match is found
+//     const customer = await stripe.customers.create({
+//       email,
+//       name,
+//       metadata: {
+//         pool_id,
+//         registrationDate: new Date().toISOString()
+//       }
+//     });
 
-    return {
-      customerId: customer.id,
-      existing: false
-    };
+//     return {
+//       customerId: customer.id,
+//       existing: false
+//     };
 
-  } catch (error) {
-    console.error('Create customer error:', error);
-    throw new Error(error.message);
-  }
-}
-async function verifySubscriptionExists(subscriptionId) {
-  const subscription = await PoolQueries.executeQuery(
-    'SELECT 1 FROM payment_system.stripe_subscriptions WHERE subscription_id = $1',
-    [subscriptionId]
-  );
-  return subscription.length > 0;
-}
+//   } catch (error) {
+//     console.error('Create customer error:', error);
+//     throw new Error(error.message);
+//   }
+// }
+// async function verifySubscriptionExists(subscriptionId) {
+//   const subscription = await PoolQueries.executeQuery(
+//     'SELECT 1 FROM payment_system.stripe_subscriptions WHERE subscription_id = $1',
+//     [subscriptionId]
+//   );
+//   return subscription.length > 0;
+// }
 
-async function getPaymentDetails(session) {
-  try {
-    const subscription = await stripe.subscriptions.retrieve(session.subscription, {
-      expand: ['default_payment_method']
-    });
+// async function getPaymentDetails(session) {
+//   try {
+//     const subscription = await stripe.subscriptions.retrieve(session.subscription, {
+//       expand: ['default_payment_method']
+//     });
 
-    if (subscription.default_payment_method) {
-      const { card } = subscription.default_payment_method;
-      if (card) {
-        return {
-          payment_method_id: subscription.default_payment_method.id,
-          card_last4: card.last4,
-          card_brand: card.brand,
-          card_exp_month: card.exp_month,
-          card_exp_year: card.exp_year,
-          card_country: card.country
-        };
-      }
-    }
-    return null;
-  } catch (error) {
-    console.error('Error fetching payment details:', error);
-    return null;
-  }
-}
-// Webhook Handlers
-async function handleCheckoutCompleted(session) {
-  const sessionId = session.id;
-  logWebhookProgress('checkout.session.completed', 'started', { session_id: sessionId });
+//     if (subscription.default_payment_method) {
+//       const { card } = subscription.default_payment_method;
+//       if (card) {
+//         return {
+//           payment_method_id: subscription.default_payment_method.id,
+//           card_last4: card.last4,
+//           card_brand: card.brand,
+//           card_exp_month: card.exp_month,
+//           card_exp_year: card.exp_year,
+//           card_country: card.country
+//         };
+//       }
+//     }
+//     return null;
+//   } catch (error) {
+//     console.error('Error fetching payment details:', error);
+//     return null;
+//   }
+// }
+// // Webhook Handlers
+// async function handleCheckoutCompleted(session) {
+//   const sessionId = session.id;
+//   logWebhookProgress('checkout.session.completed', 'started', { session_id: sessionId });
 
-  await retryOperation(async () => {
-    const { pool_id, owner_id, username, email } = session.metadata;
+//   await retryOperation(async () => {
+//     const { pool_id, owner_id, username, email } = session.metadata;
 
-    // Get payment details
-    const paymentDetails = await getPaymentDetails(session);
+//     // Get payment details
+//     const paymentDetails = await getPaymentDetails(session);
 
-    // Create/update pool first
-    await ensurePoolExists(pool_id, {
-      owner_id,
-      username,
-      email,
-      currency: session.currency,
-      metadata: {
-        session_id: session.id,
-        customer_id: session.customer,
-        initial_amount: session.amount_total
-      }
-    });
+//     // Create/update pool first
+//     await ensurePoolExists(pool_id, {
+//       owner_id,
+//       username,
+//       email,
+//       currency: session.currency,
+//       metadata: {
+//         session_id: session.id,
+//         customer_id: session.customer,
+//         initial_amount: session.amount_total
+//       }
+//     });
 
-    if (session.subscription) {
-      // Get subscription details
-      const stripeSubscription = await stripe.subscriptions.retrieve(
-        session.subscription,
-        { expand: ['items.data.price'] }
-      );
+//     if (session.subscription) {
+//       // Get subscription details
+//       const stripeSubscription = await stripe.subscriptions.retrieve(
+//         session.subscription,
+//         { expand: ['items.data.price'] }
+//       );
 
-      // Update Stripe subscription with pool_id
-      await stripe.subscriptions.update(session.subscription, {
-        metadata: { pool_id, owner_id, username }
-      });
+//       // Update Stripe subscription with pool_id
+//       await stripe.subscriptions.update(session.subscription, {
+//         metadata: { pool_id, owner_id, username }
+//       });
 
-      // Create subscription
-      await PoolQueries.createOrUpdateSubscription({
-        subscription_id: session.subscription,
-        pool_id,
-        customer_id: session.customer,
-        amount: session.amount_total,
-        currency: session.currency,
-        interval: stripeSubscription.items.data[0].price.recurring.interval,
-        status: stripeSubscription.status,
-        ...(paymentDetails || {}),
-        metadata: {
-          session_id: session.id,
-          customer_email: email,
-          initial_setup: true
-        }
-      });
+//       // Create subscription
+//       await PoolQueries.createOrUpdateSubscription({
+//         subscription_id: session.subscription,
+//         pool_id,
+//         customer_id: session.customer,
+//         amount: session.amount_total,
+//         currency: session.currency,
+//         interval: stripeSubscription.items.data[0].price.recurring.interval,
+//         status: stripeSubscription.status,
+//         ...(paymentDetails || {}),
+//         metadata: {
+//           session_id: session.id,
+//           customer_email: email,
+//           initial_setup: true
+//         }
+//       });
 
-      // Add delay to ensure subscription is accessible
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
+//       // Add delay to ensure subscription is accessible
+//       await new Promise(resolve => setTimeout(resolve, 2000));
+//     }
 
-    queueManager.completedWebhooks.add(`checkout.session.completed:${sessionId}`);
-  }, 'handleCheckoutCompleted');
+//     queueManager.completedWebhooks.add(`checkout.session.completed:${sessionId}`);
+//   }, 'handleCheckoutCompleted');
 
-  logWebhookProgress('checkout.session.completed', 'completed', { session_id: sessionId });
-}
+//   logWebhookProgress('checkout.session.completed', 'completed', { session_id: sessionId });
+// }
 
-async function handlePaymentSuccess(paymentIntent) {
-  logWebhookProgress('payment_intent.succeeded', 'started', { payment_id: paymentIntent.id });
+// async function handlePaymentSuccess(paymentIntent) {
+//   logWebhookProgress('payment_intent.succeeded', 'started', { payment_id: paymentIntent.id });
 
-  await retryOperation(async () => {
-    console.log('Payment Intent:', paymentIntent);
+//   await retryOperation(async () => {
+//     console.log('Payment Intent:', paymentIntent);
 
-    // Get the charge from latest_charge
-    const charge = await stripe.charges.retrieve(paymentIntent.latest_charge, {
-      expand: ['balance_transaction']
-    });
+//     // Get the charge from latest_charge
+//     const charge = await stripe.charges.retrieve(paymentIntent.latest_charge, {
+//       expand: ['balance_transaction']
+//     });
 
-    if (!charge || !charge.balance_transaction) {
-      console.log('No balance transaction found for charge:', paymentIntent.latest_charge);
-      return;
-    }
+//     if (!charge || !charge.balance_transaction) {
+//       console.log('No balance transaction found for charge:', paymentIntent.latest_charge);
+//       return;
+//     }
 
-    // Get invoice and subscription from charge
-    if (!charge.invoice) {
-      console.log('No invoice found for charge:', charge.id);
-      return;
-    }
+//     // Get invoice and subscription from charge
+//     if (!charge.invoice) {
+//       console.log('No invoice found for charge:', charge.id);
+//       return;
+//     }
 
-    const invoice = await stripe.invoices.retrieve(charge.invoice);
-    if (!invoice || !invoice.subscription) {
-      console.log('No subscription found in invoice:', charge.invoice);
-      return;
-    }
+//     const invoice = await stripe.invoices.retrieve(charge.invoice);
+//     if (!invoice || !invoice.subscription) {
+//       console.log('No subscription found in invoice:', charge.invoice);
+//       return;
+//     }
 
-    // Get subscription details
-    const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+//     // Get subscription details
+//     const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
     
-    console.log('Creating transfer for:', {
-      payment_intent: paymentIntent.id,
-      charge_id: charge.id,
-      balance_transaction: charge.balance_transaction.id,
-      subscription_id: subscription.id,
-      pool_id: subscription.metadata.pool_id
-    });
+//     console.log('Creating transfer for:', {
+//       payment_intent: paymentIntent.id,
+//       charge_id: charge.id,
+//       balance_transaction: charge.balance_transaction.id,
+//       subscription_id: subscription.id,
+//       pool_id: subscription.metadata.pool_id
+//     });
 
-    // Create transfer record
-    await PoolQueries.createTransfer({
-      transaction_id: charge.balance_transaction.id,
-      customer_id: paymentIntent.customer,
-      payment_id: paymentIntent.id,
-      payout_id: null,
-      pool_id: subscription.metadata.pool_id,
-      amount: paymentIntent.amount,
-      currency: paymentIntent.currency,
-      payment_datetime: new Date(paymentIntent.created * 1000),
-      status: 'active'
-    });
+//     // Create transfer record
+//     await PoolQueries.createTransfer({
+//       transaction_id: charge.balance_transaction.id,
+//       customer_id: paymentIntent.customer,
+//       payment_id: paymentIntent.id,
+//       payout_id: null,
+//       pool_id: subscription.metadata.pool_id,
+//       amount: paymentIntent.amount,
+//       currency: paymentIntent.currency,
+//       payment_datetime: new Date(paymentIntent.created * 1000),
+//       status: 'active'
+//     });
 
-    logWebhookProgress('transfer.created', 'completed', {
-      payment_id: paymentIntent.id,
-      transaction_id: charge.balance_transaction.id,
-      amount: paymentIntent.amount / 100,
-      pool_id: subscription.metadata.pool_id
-    });
-  }, 'handlePaymentSuccess');
-}
+//     logWebhookProgress('transfer.created', 'completed', {
+//       payment_id: paymentIntent.id,
+//       transaction_id: charge.balance_transaction.id,
+//       amount: paymentIntent.amount / 100,
+//       pool_id: subscription.metadata.pool_id
+//     });
+//   }, 'handlePaymentSuccess');
+// }
 
-async function handleInvoicePaid(invoice) {
-  const sessionId = invoice.subscription;
-  logWebhookProgress('invoice.paid', 'started', { invoice_id: invoice.id });
+// async function handleInvoicePaid(invoice) {
+//   const sessionId = invoice.subscription;
+//   logWebhookProgress('invoice.paid', 'started', { invoice_id: invoice.id });
 
-  await retryOperation(async () => {
-    if (!queueManager.completedWebhooks.has(`checkout.session.completed:${sessionId}`)) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
+//   await retryOperation(async () => {
+//     if (!queueManager.completedWebhooks.has(`checkout.session.completed:${sessionId}`)) {
+//       await new Promise(resolve => setTimeout(resolve, 2000));
+//     }
 
-    const subscription = await stripe.subscriptions.retrieve(
-      invoice.subscription,
-      { expand: ['default_payment_method'] }
-    );
+//     const subscription = await stripe.subscriptions.retrieve(
+//       invoice.subscription,
+//       { expand: ['default_payment_method'] }
+//     );
 
-    const pool_id = subscription.plan.metadata?.pool_id;
-    if (!pool_id) {
-      throw new Error(`No pool_id in subscription metadata for subscription ${subscription.id}`);
-    }
+//     const pool_id = subscription.plan.metadata?.pool_id;
+//     if (!pool_id) {
+//       throw new Error(`No pool_id in subscription metadata for subscription ${subscription.id}`);
+//     }
 
-    // Verify both pool and subscription exist
-    await ensurePoolExists(pool_id, null);
-    const subscriptionExists = await verifySubscriptionExists(subscription.id);
-    if (!subscriptionExists) {
-      throw new Error('Subscription not found in database');
-    }
+//     // Verify both pool and subscription exist
+//     await ensurePoolExists(pool_id, null);
+//     const subscriptionExists = await verifySubscriptionExists(subscription.id);
+//     if (!subscriptionExists) {
+//       throw new Error('Subscription not found in database');
+//     }
 
-    await PoolQueries.processPayment({
-      subscription_id: subscription.id,
-      pool_id,
-      event_type: 'invoice.paid',
-      amount: invoice.amount_paid,
-      currency: invoice.currency,
-      status: 'succeeded',
-      metadata: {
-        invoice_id: invoice.id,
-        customer_id: invoice.customer,
-        payment_intent: invoice.payment_intent,
-        subscription: subscription.id
-      }
-    });
+//     await PoolQueries.processPayment({
+//       subscription_id: subscription.id,
+//       pool_id,
+//       event_type: 'invoice.paid',
+//       amount: invoice.amount_paid,
+//       currency: invoice.currency,
+//       status: 'succeeded',
+//       metadata: {
+//         invoice_id: invoice.id,
+//         customer_id: invoice.customer,
+//         payment_intent: invoice.payment_intent,
+//         subscription: subscription.id
+//       }
+//     });
 
-    logWebhookProgress('invoice.paid', 'completed', {
-      subscription_id: subscription.id,
-      pool_id,
-      amount: invoice.amount_paid / 100,
-      status: 'succeeded'
-    });
-  }, 'handleInvoicePaid');
-}
-async function getDefaultPaymentMethod(customerId) {
-  try {
-    // Fetch the customer to get the default payment method
-    const customer = await stripe.customers.retrieve(customerId);
+//     logWebhookProgress('invoice.paid', 'completed', {
+//       subscription_id: subscription.id,
+//       pool_id,
+//       amount: invoice.amount_paid / 100,
+//       status: 'succeeded'
+//     });
+//   }, 'handleInvoicePaid');
+// }
+// async function getDefaultPaymentMethod(customerId) {
+//   try {
+//     // Fetch the customer to get the default payment method
+//     const customer = await stripe.customers.retrieve(customerId);
 
-    // Check if the customer has a default payment method set
-    const defaultPaymentMethodId = customer.invoice_settings.default_payment_method;
+//     // Check if the customer has a default payment method set
+//     const defaultPaymentMethodId = customer.invoice_settings.default_payment_method;
 
-    if (!defaultPaymentMethodId) {
-      throw new Error('No default payment method set for this customer');
-    }
+//     if (!defaultPaymentMethodId) {
+//       throw new Error('No default payment method set for this customer');
+//     }
 
-    // Retrieve the default payment method details
-    const paymentMethod = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
+//     // Retrieve the default payment method details
+//     const paymentMethod = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
 
-    return paymentMethod;
-  } catch (error) {
-    console.error('Error fetching default payment method:', error.message);
-    throw error;
-  }
-}
-
-
-// Clear any pending invoice items
-async function clearPendingInvoiceItems(customerId) {
-  const existingItems = await stripe.invoiceItems.list({
-    customer: customerId,
-    pending: true
-  });
-
-  for (const item of existingItems.data) {
-    await stripe.invoiceItems.del(item.id);
-  }
-}
-
-async function handleInvoiceFailed(invoice) {
-  logWebhookProgress('invoice.failed', 'started', { invoice_id: invoice.id });
-
-  await retryOperation(async () => {
-    const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-    const pool_id = subscription.plan.metadata?.pool_id;
-
-    if (!pool_id) {
-      throw new Error('No pool_id found for subscription');
-    }
-
-    await PoolQueries.recordFailedPayment({
-      subscription_id: subscription.id,
-      pool_id,
-      amount: invoice.amount_due,
-      metadata: {
-        invoice_id: invoice.id,
-        customer_id: invoice.customer,
-        attempt_count: invoice.attempt_count,
-        next_payment_attempt: invoice.next_payment_attempt,
-        failure_reason: invoice.last_payment_error?.message,
-        failure_code: invoice.last_payment_error?.code
-      }
-    });
-
-    logWebhookProgress('invoice.failed', 'completed', {
-      subscription_id: subscription.id,
-      amount: invoice.amount_due,
-      attempt_count: invoice.attempt_count
-    });
-  }, 'handleInvoiceFailed');
-}
-
-async function handleSubscriptionCreated(subscription) {
-  const sessionId = subscription.id;
-  logWebhookProgress('subscription.created', 'started', { subscription_id: sessionId });
-
-  await retryOperation(async () => {
-    const pool_id = subscription.plan.metadata?.pool_id;
-    if (!pool_id) {
-      throw new Error('No pool_id found in subscription metadata');
-    }
-
-    // Verify pool exists
-    await ensurePoolExists(pool_id, null);
-
-    const currentPeriodStart = new Date(subscription.current_period_start * 1000);
-    const currentPeriodEnd = new Date(subscription.current_period_end * 1000);
-
-    const subscriptionData = {
-      subscription_id: subscription.id,
-      pool_id,
-      customer_id: subscription.customer,
-      amount: subscription.plan.amount,
-      currency: subscription.currency,
-      interval: subscription.plan.interval,
-      status: subscription.status,
-      last_payment_date: currentPeriodStart,
-      next_payment_date: currentPeriodEnd,
-      metadata: {
-        product_id: subscription.plan.product,
-        price_id: subscription.plan.id,
-        period_start: currentPeriodStart.toISOString(),
-        period_end: currentPeriodEnd.toISOString(),
-        billing_cycle_anchor: subscription.billing_cycle_anchor 
-          ? new Date(subscription.billing_cycle_anchor * 1000).toISOString()
-          : null,
-        collection_method: subscription.collection_method,
-        interval_count: subscription.plan.interval_count || 1
-      }
-    };
-
-    await PoolQueries.createOrUpdateSubscription(subscriptionData);
-
-    // Log initial payment event
-    await PoolQueries.logPayment({
-      pool_id,
-      event_type: 'subscription.created',
-      amount: subscription.plan.amount / 100,
-      status: subscription.status,
-      metadata: {
-        subscription_id: subscription.id,
-        customer_id: subscription.customer,
-        original_amount: subscription.plan.amount,
-        period_start: currentPeriodStart.toISOString(),
-        period_end: currentPeriodEnd.toISOString()
-      }
-    });
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    queueManager.completedWebhooks.add(`customer.subscription.created:${sessionId}`);
-
-    logWebhookProgress('subscription.created', 'completed', {
-      subscription_id: subscription.id,
-      pool_id,
-      amount: subscription.plan.amount / 100
-    });
-  }, 'handleSubscriptionCreated');
-}
-
-async function handleSubscriptionUpdated(subscription) {
-  logWebhookProgress('subscription.updated', 'started', { subscription_id: subscription.id });
-
-  await retryOperation(async () => {
-    const pool_id = subscription.plan.metadata?.pool_id;
-    let status = 'active';
-
-    // Check if subscription is paused
-    if (subscription.pause_collection && subscription.pause_collection.behavior === 'void') {
-      status = 'paused';
-    }
-
-    await PoolQueries.createOrUpdateSubscription({
-      subscription_id: subscription.id,
-      pool_id,
-      customer_id: subscription.customer,
-      amount: subscription.plan.amount,
-      currency: subscription.currency,
-      interval: subscription.plan.interval,
-      status: status,
-      next_payment_date: new Date(subscription.current_period_end * 1000),
-      metadata: {
-        stripe_status: subscription.status,
-        period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-        pause_collection: subscription.pause_collection ? 'void' : null,
-        pause_resumes_at: subscription.pause_collection?.resumes_at ? 
-          new Date(subscription.pause_collection.resumes_at * 1000).toISOString() : null
-      }
-    });
-
-    logWebhookProgress('subscription.updated', 'completed', {
-      subscription_id: subscription.id,
-      status: status,
-      pause_collection: subscription.pause_collection ? 'void' : null
-    });
-  }, 'handleSubscriptionUpdated');
-}
+//     return paymentMethod;
+//   } catch (error) {
+//     console.error('Error fetching default payment method:', error.message);
+//     throw error;
+//   }
+// }
 
 
-async function handleSubscriptionCanceled(subscription) {
-  logWebhookProgress('subscription.canceled', 'started', { subscription_id: subscription.id });
+// // Clear any pending invoice items
+// async function clearPendingInvoiceItems(customerId) {
+//   const existingItems = await stripe.invoiceItems.list({
+//     customer: customerId,
+//     pending: true
+//   });
 
-  await retryOperation(async () => {
-    const pool_id = subscription.plan.metadata?.pool_id;
-    if (!pool_id) {
-      throw new Error('No pool_id found for subscription');
-    }
+//   for (const item of existingItems.data) {
+//     await stripe.invoiceItems.del(item.id);
+//   }
+// }
 
-    await PoolQueries.updateSubscriptionStatus({
-      subscription_id: subscription.id,
-      status: 'canceled',
-      metadata: {
-        canceled_at: new Date().toISOString(),
-        cancel_reason: subscription.cancellation_details?.reason,
-        period_end: subscription.current_period_end 
-          ? new Date(subscription.current_period_end * 1000).toISOString()
-          : null
-      }
-    });
+// async function handleInvoiceFailed(invoice) {
+//   logWebhookProgress('invoice.failed', 'started', { invoice_id: invoice.id });
 
-    logWebhookProgress('subscription.canceled', 'completed', {
-      subscription_id: subscription.id,
-      pool_id,
-      cancel_reason: subscription.cancellation_details?.reason
-    });
-  }, 'handleSubscriptionCanceled');
-}
+//   await retryOperation(async () => {
+//     const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+//     const pool_id = subscription.plan.metadata?.pool_id;
+
+//     if (!pool_id) {
+//       throw new Error('No pool_id found for subscription');
+//     }
+
+//     await PoolQueries.recordFailedPayment({
+//       subscription_id: subscription.id,
+//       pool_id,
+//       amount: invoice.amount_due,
+//       metadata: {
+//         invoice_id: invoice.id,
+//         customer_id: invoice.customer,
+//         attempt_count: invoice.attempt_count,
+//         next_payment_attempt: invoice.next_payment_attempt,
+//         failure_reason: invoice.last_payment_error?.message,
+//         failure_code: invoice.last_payment_error?.code
+//       }
+//     });
+
+//     logWebhookProgress('invoice.failed', 'completed', {
+//       subscription_id: subscription.id,
+//       amount: invoice.amount_due,
+//       attempt_count: invoice.attempt_count
+//     });
+//   }, 'handleInvoiceFailed');
+// }
+
+// async function handleSubscriptionCreated(subscription) {
+//   const sessionId = subscription.id;
+//   logWebhookProgress('subscription.created', 'started', { subscription_id: sessionId });
+
+//   await retryOperation(async () => {
+//     const pool_id = subscription.plan.metadata?.pool_id;
+//     if (!pool_id) {
+//       throw new Error('No pool_id found in subscription metadata');
+//     }
+
+//     // Verify pool exists
+//     await ensurePoolExists(pool_id, null);
+
+//     const currentPeriodStart = new Date(subscription.current_period_start * 1000);
+//     const currentPeriodEnd = new Date(subscription.current_period_end * 1000);
+
+//     const subscriptionData = {
+//       subscription_id: subscription.id,
+//       pool_id,
+//       customer_id: subscription.customer,
+//       amount: subscription.plan.amount,
+//       currency: subscription.currency,
+//       interval: subscription.plan.interval,
+//       status: subscription.status,
+//       last_payment_date: currentPeriodStart,
+//       next_payment_date: currentPeriodEnd,
+//       metadata: {
+//         product_id: subscription.plan.product,
+//         price_id: subscription.plan.id,
+//         period_start: currentPeriodStart.toISOString(),
+//         period_end: currentPeriodEnd.toISOString(),
+//         billing_cycle_anchor: subscription.billing_cycle_anchor 
+//           ? new Date(subscription.billing_cycle_anchor * 1000).toISOString()
+//           : null,
+//         collection_method: subscription.collection_method,
+//         interval_count: subscription.plan.interval_count || 1
+//       }
+//     };
+
+//     await PoolQueries.createOrUpdateSubscription(subscriptionData);
+
+//     // Log initial payment event
+//     await PoolQueries.logPayment({
+//       pool_id,
+//       event_type: 'subscription.created',
+//       amount: subscription.plan.amount / 100,
+//       status: subscription.status,
+//       metadata: {
+//         subscription_id: subscription.id,
+//         customer_id: subscription.customer,
+//         original_amount: subscription.plan.amount,
+//         period_start: currentPeriodStart.toISOString(),
+//         period_end: currentPeriodEnd.toISOString()
+//       }
+//     });
+
+//     await new Promise(resolve => setTimeout(resolve, 1000));
+//     queueManager.completedWebhooks.add(`customer.subscription.created:${sessionId}`);
+
+//     logWebhookProgress('subscription.created', 'completed', {
+//       subscription_id: subscription.id,
+//       pool_id,
+//       amount: subscription.plan.amount / 100
+//     });
+//   }, 'handleSubscriptionCreated');
+// }
+
+// async function handleSubscriptionUpdated(subscription) {
+//   logWebhookProgress('subscription.updated', 'started', { subscription_id: subscription.id });
+
+//   await retryOperation(async () => {
+//     const pool_id = subscription.plan.metadata?.pool_id;
+//     let status = 'active';
+
+//     // Check if subscription is paused
+//     if (subscription.pause_collection && subscription.pause_collection.behavior === 'void') {
+//       status = 'paused';
+//     }
+
+//     await PoolQueries.createOrUpdateSubscription({
+//       subscription_id: subscription.id,
+//       pool_id,
+//       customer_id: subscription.customer,
+//       amount: subscription.plan.amount,
+//       currency: subscription.currency,
+//       interval: subscription.plan.interval,
+//       status: status,
+//       next_payment_date: new Date(subscription.current_period_end * 1000),
+//       metadata: {
+//         stripe_status: subscription.status,
+//         period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+//         pause_collection: subscription.pause_collection ? 'void' : null,
+//         pause_resumes_at: subscription.pause_collection?.resumes_at ? 
+//           new Date(subscription.pause_collection.resumes_at * 1000).toISOString() : null
+//       }
+//     });
+
+//     logWebhookProgress('subscription.updated', 'completed', {
+//       subscription_id: subscription.id,
+//       status: status,
+//       pause_collection: subscription.pause_collection ? 'void' : null
+//     });
+//   }, 'handleSubscriptionUpdated');
+// }
+
+
+// async function handleSubscriptionCanceled(subscription) {
+//   logWebhookProgress('subscription.canceled', 'started', { subscription_id: subscription.id });
+
+//   await retryOperation(async () => {
+//     const pool_id = subscription.plan.metadata?.pool_id;
+//     if (!pool_id) {
+//       throw new Error('No pool_id found for subscription');
+//     }
+
+//     await PoolQueries.updateSubscriptionStatus({
+//       subscription_id: subscription.id,
+//       status: 'canceled',
+//       metadata: {
+//         canceled_at: new Date().toISOString(),
+//         cancel_reason: subscription.cancellation_details?.reason,
+//         period_end: subscription.current_period_end 
+//           ? new Date(subscription.current_period_end * 1000).toISOString()
+//           : null
+//       }
+//     });
+
+//     logWebhookProgress('subscription.canceled', 'completed', {
+//       subscription_id: subscription.id,
+//       pool_id,
+//       cancel_reason: subscription.cancellation_details?.reason
+//     });
+//   }, 'handleSubscriptionCanceled');
+// }
 
 
 
-async function handlePayoutPaid(payout) {
-  logWebhookProgress('payout.paid', 'started', { payout_id: payout.id });
+// async function handlePayoutPaid(payout) {
+//   logWebhookProgress('payout.paid', 'started', { payout_id: payout.id });
 
-  await retryOperation(async () => {
-    // Get all balance transactions for this payout
-    const balanceTransactions = await stripe.balanceTransactions.list({
-      payout: payout.id
-    });
-    console.log('Balance Transactions:', balanceTransactions.data);
-    // Update all transfers with payout information
-    await PoolQueries.updateTransferWithPayout({
-      payout_id: payout.id,
-      settlement_datetime: new Date(payout.arrival_date * 1000),
-      transaction_ids: balanceTransactions.data.map(t => t.id)
-    });
+//   await retryOperation(async () => {
+//     // Get all balance transactions for this payout
+//     const balanceTransactions = await stripe.balanceTransactions.list({
+//       payout: payout.id
+//     });
+//     console.log('Balance Transactions:', balanceTransactions.data);
+//     // Update all transfers with payout information
+//     await PoolQueries.updateTransferWithPayout({
+//       payout_id: payout.id,
+//       settlement_datetime: new Date(payout.arrival_date * 1000),
+//       transaction_ids: balanceTransactions.data.map(t => t.id)
+//     });
 
-    logWebhookProgress('payout.paid', 'completed', {
-      payout_id: payout.id,
-      transaction_count: balanceTransactions.data.length
-    });
-  }, 'handlePayoutPaid');
-}
-
-
-async function handleCustomerUpdated(customer) {
-  logWebhookProgress('customer.updated', 'started', { customer_id: customer.id });
-
-  await retryOperation(async () => {
-    // Retrieve full customer object with default payment method
-    const customerWithPaymentMethod = await stripe.customers.retrieve(customer.id, {
-      expand: ['invoice_settings.default_payment_method']
-    });
+//     logWebhookProgress('payout.paid', 'completed', {
+//       payout_id: payout.id,
+//       transaction_count: balanceTransactions.data.length
+//     });
+//   }, 'handlePayoutPaid');
+// }
 
 
-    const defaultPaymentMethod = customerWithPaymentMethod.invoice_settings.default_payment_method;
+// async function handleCustomerUpdated(customer) {
+//   logWebhookProgress('customer.updated', 'started', { customer_id: customer.id });
+
+//   await retryOperation(async () => {
+//     // Retrieve full customer object with default payment method
+//     const customerWithPaymentMethod = await stripe.customers.retrieve(customer.id, {
+//       expand: ['invoice_settings.default_payment_method']
+//     });
+
+
+//     const defaultPaymentMethod = customerWithPaymentMethod.invoice_settings.default_payment_method;
     
-    if (!defaultPaymentMethod || defaultPaymentMethod.type !== 'card') {
-      console.log('No valid default payment method found for customer:', customer.id);
-      return;
-    }
+//     if (!defaultPaymentMethod || defaultPaymentMethod.type !== 'card') {
+//       console.log('No valid default payment method found for customer:', customer.id);
+//       return;
+//     }
 
-    console.log('Processing customer update with payment method:', {
-      customer_id: customer.id,
-      payment_method_id: defaultPaymentMethod.id,
-      card_last4: defaultPaymentMethod.card.last4
-    });
+//     console.log('Processing customer update with payment method:', {
+//       customer_id: customer.id,
+//       payment_method_id: defaultPaymentMethod.id,
+//       card_last4: defaultPaymentMethod.card.last4
+//     });
 
-    // Get all subscriptions for this customer
-    const subscriptions = await stripe.subscriptions.list({
-      customer: customer.id,
-      expand: ['data.default_payment_method'],
-      limit: 100
-    });
+//     // Get all subscriptions for this customer
+//     const subscriptions = await stripe.subscriptions.list({
+//       customer: customer.id,
+//       expand: ['data.default_payment_method'],
+//       limit: 100
+//     });
 
-    for (const subscription of subscriptions.data) {
-      const pool_id = subscription.plan.metadata?.pool_id;
-      if (!pool_id) {
-        console.log(`No pool_id found for subscription ${subscription.id}`);
-        continue;
-      }
+//     for (const subscription of subscriptions.data) {
+//       const pool_id = subscription.plan.metadata?.pool_id;
+//       if (!pool_id) {
+//         console.log(`No pool_id found for subscription ${subscription.id}`);
+//         continue;
+//       }
 
-      // Get previous payment method details
-      const previousPaymentMethod = subscription.default_payment_method;
+//       // Get previous payment method details
+//       const previousPaymentMethod = subscription.default_payment_method;
 
-      // Update subscription's default payment method if different
-      if (subscription.default_payment_method?.id !== defaultPaymentMethod.id) {
-        await stripe.subscriptions.update(subscription.id, {
-          default_payment_method: defaultPaymentMethod.id
-        });
-      }
+//       // Update subscription's default payment method if different
+//       if (subscription.default_payment_method?.id !== defaultPaymentMethod.id) {
+//         await stripe.subscriptions.update(subscription.id, {
+//           default_payment_method: defaultPaymentMethod.id
+//         });
+//       }
 
-      // Update in database
-      await PoolQueries.updateSubscriptionPaymentMethod({
-        subscription_id: subscription.id,
-        payment_method_id: defaultPaymentMethod.id,
-        card_last4: defaultPaymentMethod.card.last4,
-        card_brand: defaultPaymentMethod.card.brand,
-        card_exp_month: defaultPaymentMethod.card.exp_month,
-        card_exp_year: defaultPaymentMethod.card.exp_year,
-        card_country: defaultPaymentMethod.card.country,
-        previous_payment_method: previousPaymentMethod ? {
-          id: previousPaymentMethod.id,
-          last4: previousPaymentMethod.card?.last4,
-          brand: previousPaymentMethod.card?.brand
-        } : null
-      });
+//       // Update in database
+//       await PoolQueries.updateSubscriptionPaymentMethod({
+//         subscription_id: subscription.id,
+//         payment_method_id: defaultPaymentMethod.id,
+//         card_last4: defaultPaymentMethod.card.last4,
+//         card_brand: defaultPaymentMethod.card.brand,
+//         card_exp_month: defaultPaymentMethod.card.exp_month,
+//         card_exp_year: defaultPaymentMethod.card.exp_year,
+//         card_country: defaultPaymentMethod.card.country,
+//         previous_payment_method: previousPaymentMethod ? {
+//           id: previousPaymentMethod.id,
+//           last4: previousPaymentMethod.card?.last4,
+//           brand: previousPaymentMethod.card?.brand
+//         } : null
+//       });
 
-      logWebhookProgress('customer.updated', 'updated_subscription', {
-        customer_id: customer.id,
-        subscription_id: subscription.id,
-        pool_id: pool_id,
-        new_card_last4: defaultPaymentMethod.card.last4,
-        payment_method_id: defaultPaymentMethod.id
-      });
-    }
-  }, 'handleCustomerUpdated');
+//       logWebhookProgress('customer.updated', 'updated_subscription', {
+//         customer_id: customer.id,
+//         subscription_id: subscription.id,
+//         pool_id: pool_id,
+//         new_card_last4: defaultPaymentMethod.card.last4,
+//         payment_method_id: defaultPaymentMethod.id
+//       });
+//     }
+//   }, 'handleCustomerUpdated');
 
-  logWebhookProgress('customer.updated', 'completed', { 
-    customer_id: customer.id 
-  });
-}
+//   logWebhookProgress('customer.updated', 'completed', { 
+//     customer_id: customer.id 
+//   });
+// }
 
-export const stripeController = {
-  // Handle checkout session creation
-  async createCheckoutSession(req, res) {
-    try {
-      const { amount, currency, interval, pool_id, owner_id, username, email,startDate } = req.body;
+// export const stripeController = {
+//   // Handle checkout session creation
+//   async createCheckoutSession(req, res) {
+//     try {
+//       const { amount, currency, interval, pool_id, owner_id, username, email,startDate } = req.body;
       
-      const hasSubscription = await PoolQueries.hasActiveSubscription(pool_id);
-      const billingStartTimestamp = parseBillingStartDate(startDate);
+//       const hasSubscription = await PoolQueries.hasActiveSubscription(pool_id);
+//       const billingStartTimestamp = parseBillingStartDate(startDate);
 
-      await retryOperation(async () => {
-        // Check for existing subscription
-        if (hasSubscription) {
-          return res.status(400).json({ 
-            error: 'Active subscription already exists for this pool'
-          });
-        }
+//       await retryOperation(async () => {
+//         // Check for existing subscription
+//         if (hasSubscription) {
+//           return res.status(400).json({ 
+//             error: 'Active subscription already exists for this pool'
+//           });
+//         }
 
-        // Create Stripe price
-        const price = await stripe.prices.create({
-          unit_amount: amount,
-          currency,
-          recurring: { interval },
-          product: process.env.STRIPE_PRODUCT_ID,
-          metadata: { pool_id }
-        });
+//         // Create Stripe price
+//         const price = await stripe.prices.create({
+//           unit_amount: amount,
+//           currency,
+//           recurring: { interval },
+//           product: process.env.STRIPE_PRODUCT_ID,
+//           metadata: { pool_id }
+//         });
 
-        // Create checkout session
-        const session = await stripe.checkout.sessions.create({
-          mode: 'subscription',
-          payment_method_types: ['card'],
-          line_items: [{ price: price.id, quantity: 1 }],
-          success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-          customer_email: email,
-          metadata: { pool_id, owner_id, username, email, currency }
-        });
+//         // Create checkout session
+//         const session = await stripe.checkout.sessions.create({
+//           mode: 'subscription',
+//           payment_method_types: ['card'],
+//           line_items: [{ price: price.id, quantity: 1 }],
+//           success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+//           cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+//           customer_email: email,
+//           metadata: { pool_id, owner_id, username, email, currency }
+//         });
 
-        res.json({ url: session.url });
-      }, 'createCheckoutSession');
-    } catch (error) {
-      console.error('Checkout Error:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-  ,
-  async createSetupSession(req, res) {
-    try {
-      const { email, pool_id, name } = req.body;
+//         res.json({ url: session.url });
+//       }, 'createCheckoutSession');
+//     } catch (error) {
+//       console.error('Checkout Error:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   }
+//   ,
+//   async createSetupSession(req, res) {
+//     try {
+//       const { email, pool_id, name } = req.body;
 
-      // Ensure required fields are provided
-      if (!email || !pool_id) {
-        return res.status(400).json({
-          success: false,
-          error: 'email and pool_id are required'
-        });
-      }
+//       // Ensure required fields are provided
+//       if (!email || !pool_id) {
+//         return res.status(400).json({
+//           success: false,
+//           error: 'email and pool_id are required'
+//         });
+//       }
 
-      // Use the internal createCustomer function
-      const { customerId } = await createCustomer({ pool_id, email, name });
+//       // Use the internal createCustomer function
+//       const { customerId } = await createCustomer({ pool_id, email, name });
 
-      // Create a setup session for the customer
-      const session = await stripe.checkout.sessions.create({
-        mode: 'setup',
-        customer: customerId,
-        payment_method_types: ['card'],
-        success_url: `${process.env.FRONTEND_URL}?setup=success`,
-        cancel_url: `${process.env.FRONTEND_URL}?setup=cancelled`
-      });
+//       // Create a setup session for the customer
+//       const session = await stripe.checkout.sessions.create({
+//         mode: 'setup',
+//         customer: customerId,
+//         payment_method_types: ['card'],
+//         success_url: `${process.env.FRONTEND_URL}?setup=success`,
+//         cancel_url: `${process.env.FRONTEND_URL}?setup=cancelled`
+//       });
 
-      res.status(200).json({
-        success: true,
-        data: {
-          sessionId: session.id,
-          url: session.url,
-          customerId: customerId
-        }
-      });
+//       res.status(200).json({
+//         success: true,
+//         data: {
+//           sessionId: session.id,
+//           url: session.url,
+//           customerId: customerId
+//         }
+//       });
 
-    } catch (error) {
-      console.error('Create setup session error:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-,
+//     } catch (error) {
+//       console.error('Create setup session error:', error);
+//       res.status(500).json({
+//         success: false,
+//         error: error.message
+//       });
+//     }
+//   }
+// ,
 
-async  createBillingPortalSession(req, res) {
-  try {
-    const { customerId } = req.body;
+// async  createBillingPortalSession(req, res) {
+//   try {
+//     const { customerId } = req.body;
 
-    if (!customerId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Customer ID is required',
-      });
-    }
+//     if (!customerId) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Customer ID is required',
+//       });
+//     }
 
-    // Create a billing portal session
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: process.env.FRONTEND_URL, // URL to redirect after the user finishes
-    });
+//     // Create a billing portal session
+//     const session = await stripe.billingPortal.sessions.create({
+//       customer: customerId,
+//       return_url: process.env.FRONTEND_URL, // URL to redirect after the user finishes
+//     });
 
-    res.status(200).json({
-      success: true,
-      url: session.url,
-    });
-  } catch (error) {
-    console.error('Error creating billing portal session:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-},
-  async createProductId(req, res) {
-    try {
-      const { name, description } = req.body;
+//     res.status(200).json({
+//       success: true,
+//       url: session.url,
+//     });
+//   } catch (error) {
+//     console.error('Error creating billing portal session:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message,
+//     });
+//   }
+// },
+//   async createProductId(req, res) {
+//     try {
+//       const { name, description } = req.body;
 
-      const product = await retryOperation(async () => {
-        return await stripe.products.create({
-          name: name || 'Subscription Product Test',
-          description: description || 'Dynamic subscription product'
-        });
-      }, 'createProductId');
+//       const product = await retryOperation(async () => {
+//         return await stripe.products.create({
+//           name: name || 'Subscription Product Test',
+//           description: description || 'Dynamic subscription product'
+//         });
+//       }, 'createProductId');
 
-      console.log('Created Product ID:', product.id);
-      res.json({ productId: product.id });
-    } catch (error) {
-      console.error('Error:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
+//       console.log('Created Product ID:', product.id);
+//       res.json({ productId: product.id });
+//     } catch (error) {
+//       console.error('Error:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
 
-  async handleWebhook(req, res) {
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        req.headers['stripe-signature'],
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
+//   async handleWebhook(req, res) {
+//     let event;
+//     try {
+//       event = stripe.webhooks.constructEvent(
+//         req.body,
+//         req.headers['stripe-signature'],
+//         process.env.STRIPE_WEBHOOK_SECRET
+//       );
 
-      logWebhookProgress(event.type, 'received', { event_id: event.id });
+//       logWebhookProgress(event.type, 'received', { event_id: event.id });
 
-      // Add priority-based delay
-      const priority = WEBHOOK_PRIORITIES[event.type] || 10;
-      await new Promise(resolve => setTimeout(resolve, priority * 500));
+//       // Add priority-based delay
+//       const priority = WEBHOOK_PRIORITIES[event.type] || 10;
+//       await new Promise(resolve => setTimeout(resolve, priority * 500));
 
-      switch (event.type) {
-        case 'checkout.session.completed':
-          await handleCheckoutCompleted(event.data.object);
-          break;
-        case 'invoice.paid':
-          await handleInvoicePaid(event.data.object);
-          break;
-        case 'invoice.payment_failed':
-          await handleInvoiceFailed(event.data.object);
-          break;
-        // case 'customer.subscription.created':
-        //   await handleSubscriptionCreated(event.data.object);
-        //   break;
-        // case 'customer.subscription.updated':
-        //   await handleSubscriptionUpdated(event.data.object);
-        //   break;
-        // case 'customer.subscription.deleted':
-        //   await handleSubscriptionCanceled(event.data.object);
-        //   break;
-        // case 'customer.updated':
-        //   await handleCustomerUpdated(event.data.object);
-        //   break;
-        case 'payout.paid':
-          await handlePayoutPaid(event.data.object);
-          break;
-          case 'payment_intent.succeeded':
-            console.log('Payment Intent Full Object:', JSON.stringify(event.data.object, null, 2));
-            await handlePaymentSuccess(event.data.object);
-            break;
+//       switch (event.type) {
+//         case 'checkout.session.completed':
+//           await handleCheckoutCompleted(event.data.object);
+//           break;
+//         case 'invoice.paid':
+//           await handleInvoicePaid(event.data.object);
+//           break;
+//         case 'invoice.payment_failed':
+//           await handleInvoiceFailed(event.data.object);
+//           break;
+//         // case 'customer.subscription.created':
+//         //   await handleSubscriptionCreated(event.data.object);
+//         //   break;
+//         // case 'customer.subscription.updated':
+//         //   await handleSubscriptionUpdated(event.data.object);
+//         //   break;
+//         // case 'customer.subscription.deleted':
+//         //   await handleSubscriptionCanceled(event.data.object);
+//         //   break;
+//         // case 'customer.updated':
+//         //   await handleCustomerUpdated(event.data.object);
+//         //   break;
+//         case 'payout.paid':
+//           await handlePayoutPaid(event.data.object);
+//           break;
+//           case 'payment_intent.succeeded':
+//             console.log('Payment Intent Full Object:', JSON.stringify(event.data.object, null, 2));
+//             await handlePaymentSuccess(event.data.object);
+//             break;
         
-        case 'charge.succeeded':
-          const charge = event.data.object;
-          logWebhookProgress('charge.succeeded', 'received', { 
-              charge_id: charge.id,
-              amount: charge.amount,
-              balance_transaction: charge.balance_transaction
-            });
-          break;
-      }
+//         case 'charge.succeeded':
+//           const charge = event.data.object;
+//           logWebhookProgress('charge.succeeded', 'received', { 
+//               charge_id: charge.id,
+//               amount: charge.amount,
+//               balance_transaction: charge.balance_transaction
+//             });
+//           break;
+//       }
 
-      res.json({ received: true });
-    } catch (error) {
-      logWebhookProgress(event?.type || 'unknown', 'error', {
-        error: error.message,
-        stack: error.stack
-      });
-      res.status(200).json({ received: true });
-    }
-  },
+//       res.json({ received: true });
+//     } catch (error) {
+//       logWebhookProgress(event?.type || 'unknown', 'error', {
+//         error: error.message,
+//         stack: error.stack
+//       });
+//       res.status(200).json({ received: true });
+//     }
+//   },
 
-  async setupPortalConfiguration(req, res) {
-    try {
-      const configuration = await retryOperation(async () => {
-        return await stripe.billingPortal.configurations.create({
-          business_profile: {
-            headline: 'Vitaminer Cashback Pool',
-          },
-          features: {
-            subscription_cancel: {
-              enabled: true,
-              mode: 'immediately',
-              proration_behavior: 'none'
-            },
-            payment_method_update: { enabled: true },
-            customer_update: {
-              enabled: true,
-              allowed_updates: ['email', 'address']
-            }
-          },
-          default_return_url: process.env.FRONTEND_URL
-        });
-      }, 'setupPortalConfiguration');
+//   async setupPortalConfiguration(req, res) {
+//     try {
+//       const configuration = await retryOperation(async () => {
+//         return await stripe.billingPortal.configurations.create({
+//           business_profile: {
+//             headline: 'Vitaminer Cashback Pool',
+//           },
+//           features: {
+//             subscription_cancel: {
+//               enabled: true,
+//               mode: 'immediately',
+//               proration_behavior: 'none'
+//             },
+//             payment_method_update: { enabled: true },
+//             customer_update: {
+//               enabled: true,
+//               allowed_updates: ['email', 'address']
+//             }
+//           },
+//           default_return_url: process.env.FRONTEND_URL
+//         });
+//       }, 'setupPortalConfiguration');
 
-      console.log('Created portal configuration:', configuration.id);
-      res.json({ configuration_id: configuration.id });
-    } catch (error) {
-      console.error('Error creating portal configuration:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
+//       console.log('Created portal configuration:', configuration.id);
+//       res.json({ configuration_id: configuration.id });
+//     } catch (error) {
+//       console.error('Error creating portal configuration:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
 
-  async createUpdateSession(req, res) {
-    try {
-      const { poolId } = req.params;
+//   async createUpdateSession(req, res) {
+//     try {
+//       const { poolId } = req.params;
       
-      const result = await retryOperation(async () => {
-        // First get subscription details
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
+//       const result = await retryOperation(async () => {
+//         // First get subscription details
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
 
-        const customer_id = subscriptions[0].customer_id;
-        const session = await stripe.billingPortal.sessions.create({
-          customer: customer_id,
-          return_url: `${process.env.FRONTEND_URL}/cancel`,
-          configuration: process.env.STRIPE_PORTAL_CONFIG_ID
-        });
+//         const customer_id = subscriptions[0].customer_id;
+//         const session = await stripe.billingPortal.sessions.create({
+//           customer: customer_id,
+//           return_url: `${process.env.FRONTEND_URL}/cancel`,
+//           configuration: process.env.STRIPE_PORTAL_CONFIG_ID
+//         });
 
-        return session;
-      }, 'createUpdateSession');
+//         return session;
+//       }, 'createUpdateSession');
 
-      res.json({ url: result.url });
-    } catch (error) {
-      console.error('Error creating portal session:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
+//       res.json({ url: result.url });
+//     } catch (error) {
+//       console.error('Error creating portal session:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
  
-  async createAndChargeInvoice(req, res) {
-    try {
-      const { customerId, amount, description } = req.body;
+//   async createAndChargeInvoice(req, res) {
+//     try {
+//       const { customerId, amount, description } = req.body;
 
-      // 1. Get default payment method
-      const defaultPaymentMethodId = await getDefaultPaymentMethod(customerId).id;
-      console.log("defaultPaymentMethodId",defaultPaymentMethodId);
-      // 2. Clear any pending invoice items
-      await clearPendingInvoiceItems(customerId);
+//       // 1. Get default payment method
+//       const defaultPaymentMethodId = await getDefaultPaymentMethod(customerId).id;
+//       console.log("defaultPaymentMethodId",defaultPaymentMethodId);
+//       // 2. Clear any pending invoice items
+//       await clearPendingInvoiceItems(customerId);
 
-      // 3. Create new invoice item
-      const invoiceItem = await stripe.invoiceItems.create({
-        customer: customerId,
-        amount: amount,
-        currency: 'usd',
-        description: description
-      });
+//       // 3. Create new invoice item
+//       const invoiceItem = await stripe.invoiceItems.create({
+//         customer: customerId,
+//         amount: amount,
+//         currency: 'usd',
+//         description: description
+//       });
 
-      // 4. Create invoice with default payment method
-      const invoice = await stripe.invoices.create({
-        customer: customerId,
-        auto_advance: true,
-        collection_method: 'charge_automatically',
-        default_payment_method: defaultPaymentMethodId,
-        pending_invoice_items_behavior: 'include'
-      });
+//       // 4. Create invoice with default payment method
+//       const invoice = await stripe.invoices.create({
+//         customer: customerId,
+//         auto_advance: true,
+//         collection_method: 'charge_automatically',
+//         default_payment_method: defaultPaymentMethodId,
+//         pending_invoice_items_behavior: 'include'
+//       });
 
-      // 5. Pay the invoice
-      const paidInvoice = await stripe.invoices.pay(invoice.id, {
-        payment_method: defaultPaymentMethodId,
-      });
+//       // 5. Pay the invoice
+//       const paidInvoice = await stripe.invoices.pay(invoice.id, {
+//         payment_method: defaultPaymentMethodId,
+//       });
 
-      res.status(200).json({
-        success: true,
-        data: {
-          invoiceId: paidInvoice.id,
-          amount: paidInvoice.amount_paid,
-          status: paidInvoice.status,
-          paymentMethod: {
-            id: defaultPaymentMethodId,
-            isDefault: true
-          },
-          hostedInvoiceUrl: paidInvoice.hosted_invoice_url,
-          pdfUrl: paidInvoice.invoice_pdf,
-          lineItems: paidInvoice.lines.data
-        }
-      });
+//       res.status(200).json({
+//         success: true,
+//         data: {
+//           invoiceId: paidInvoice.id,
+//           amount: paidInvoice.amount_paid,
+//           status: paidInvoice.status,
+//           paymentMethod: {
+//             id: defaultPaymentMethodId,
+//             isDefault: true
+//           },
+//           hostedInvoiceUrl: paidInvoice.hosted_invoice_url,
+//           pdfUrl: paidInvoice.invoice_pdf,
+//           lineItems: paidInvoice.lines.data
+//         }
+//       });
 
-    } catch (error) {
-      console.error('Invoice creation error:', error);
+//     } catch (error) {
+//       console.error('Invoice creation error:', error);
       
-      // Specific error handling
-      if (error.message.includes('No default payment method found')) {
-        return res.status(400).json({
-          success: false,
-          error: 'Please set up a payment method before creating an invoice'
-        });
-      }
+//       // Specific error handling
+//       if (error.message.includes('No default payment method found')) {
+//         return res.status(400).json({
+//           success: false,
+//           error: 'Please set up a payment method before creating an invoice'
+//         });
+//       }
 
-      // Handle other Stripe errors
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-  ,
-  async updateSubscriptionPrice(req, res) {
-    try {
-      const { poolId } = req.params;
-      const { new_amount } = req.body;
+//       // Handle other Stripe errors
+//       res.status(500).json({
+//         success: false,
+//         error: error.message
+//       });
+//     }
+//   }
+//   ,
+//   async updateSubscriptionPrice(req, res) {
+//     try {
+//       const { poolId } = req.params;
+//       const { new_amount } = req.body;
 
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
-        if(subscriptions[0].status === 'canceled') {  
-          throw new Error('Subscription is already canceled');
-        }
+//       const result = await retryOperation(async () => {
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
+//         if(subscriptions[0].status === 'canceled') {  
+//           throw new Error('Subscription is already canceled');
+//         }
 
-        const subscription_id = subscriptions[0].subscription_id;
-        const subscription = await stripe.subscriptions.retrieve(subscription_id);
+//         const subscription_id = subscriptions[0].subscription_id;
+//         const subscription = await stripe.subscriptions.retrieve(subscription_id);
 
-        const newPrice = await stripe.prices.create({
-          unit_amount: new_amount,
-          currency: subscription.currency,
-          recurring: {
-            interval: subscription.items.data[0].price.recurring.interval,
-            interval_count: subscription.items.data[0].price.recurring.interval_count
-          },
-          product: subscription.items.data[0].price.product,
-          metadata: { pool_id: poolId }
-        });
+//         const newPrice = await stripe.prices.create({
+//           unit_amount: new_amount,
+//           currency: subscription.currency,
+//           recurring: {
+//             interval: subscription.items.data[0].price.recurring.interval,
+//             interval_count: subscription.items.data[0].price.recurring.interval_count
+//           },
+//           product: subscription.items.data[0].price.product,
+//           metadata: { pool_id: poolId }
+//         });
 
-        const updatedSubscription = await stripe.subscriptions.update(subscription_id, {
-          items: [{
-            id: subscription.items.data[0].id,
-            price: newPrice.id,
-          }],
-          proration_behavior: 'none'
-        });
+//         const updatedSubscription = await stripe.subscriptions.update(subscription_id, {
+//           items: [{
+//             id: subscription.items.data[0].id,
+//             price: newPrice.id,
+//           }],
+//           proration_behavior: 'none'
+//         });
 
-        await PoolQueries.updateSubscriptionPrice({
-          subscription_id,
-          amount: new_amount,
-          metadata: {
-            previous_amount: subscription.items.data[0].price.unit_amount,
-            price_change_date: new Date().toISOString()
-          }
-        });
+//         await PoolQueries.updateSubscriptionPrice({
+//           subscription_id,
+//           amount: new_amount,
+//           metadata: {
+//             previous_amount: subscription.items.data[0].price.unit_amount,
+//             price_change_date: new Date().toISOString()
+//           }
+//         });
 
-        return {
-          old_amount: subscription.items.data[0].price.unit_amount / 100,
-          new_amount: new_amount / 100,
-          currency: subscription.currency,
-          subscription: updatedSubscription
-        };
-      }, 'updateSubscriptionPrice');
+//         return {
+//           old_amount: subscription.items.data[0].price.unit_amount / 100,
+//           new_amount: new_amount / 100,
+//           currency: subscription.currency,
+//           subscription: updatedSubscription
+//         };
+//       }, 'updateSubscriptionPrice');
 
-      res.json({
-        message: 'Subscription price updated successfully',
-        ...result
-      });
-    } catch (error) {
-      console.error('Error updating subscription price:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
+//       res.json({
+//         message: 'Subscription price updated successfully',
+//         ...result
+//       });
+//     } catch (error) {
+//       console.error('Error updating subscription price:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
 
 
-  async testingforpaymentype(req, res) {
-    try {
-      const { poolId } = req.params;
+//   async testingforpaymentype(req, res) {
+//     try {
+//       const { poolId } = req.params;
 
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
+//       const result = await retryOperation(async () => {
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
         
 
-        const customerId = subscriptions[0].customer_id;
-        const customerWithPaymentMethod = await stripe.customers.retrieve(customerId, {
-          expand: ['invoice_settings.default_payment_method']
-        });
+//         const customerId = subscriptions[0].customer_id;
+//         const customerWithPaymentMethod = await stripe.customers.retrieve(customerId, {
+//           expand: ['invoice_settings.default_payment_method']
+//         });
     
 
        
 
     
 
-        return {
-          customerWithPaymentMethod
-        };
-      }, 'updateSubscriptionPrice');
+//         return {
+//           customerWithPaymentMethod
+//         };
+//       }, 'updateSubscriptionPrice');
 
-      res.json({
-        message: 'Subscription price updated successfully',
-        ...result
-      });
-    } catch (error) {
-      console.error('Error updating subscription price:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
+//       res.json({
+//         message: 'Subscription price updated successfully',
+//         ...result
+//       });
+//     } catch (error) {
+//       console.error('Error updating subscription price:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
 
   
-  async cancelSubscription(req, res) {
-    try {
-      const { poolId } = req.params;
-      const { cancel_at_period_end = false } = req.body;
+//   async cancelSubscription(req, res) {
+//     try {
+//       const { poolId } = req.params;
+//       const { cancel_at_period_end = false } = req.body;
 
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
+//       const result = await retryOperation(async () => {
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
 
-        const subscription_id = subscriptions[0].subscription_id;
-        let canceledSubscription;
+//         const subscription_id = subscriptions[0].subscription_id;
+//         let canceledSubscription;
 
-        if (cancel_at_period_end) {
-          canceledSubscription = await stripe.subscriptions.update(subscription_id, {
-            cancel_at_period_end: true
-          });
-        } else {
-          canceledSubscription = await stripe.subscriptions.cancel(subscription_id);
-        }
+//         if (cancel_at_period_end) {
+//           canceledSubscription = await stripe.subscriptions.update(subscription_id, {
+//             cancel_at_period_end: true
+//           });
+//         } else {
+//           canceledSubscription = await stripe.subscriptions.cancel(subscription_id);
+//         }
 
-        await PoolQueries.updateSubscriptionStatus({
-          subscription_id,
-          status: 'canceled',
-          metadata: {
-            canceled_at: new Date().toISOString(),
-            cancel_at_period_end,
-            cancel_effective_date: cancel_at_period_end ? 
-              new Date(canceledSubscription.current_period_end * 1000).toISOString() :
-              new Date().toISOString()
-          }
-        });
+//         await PoolQueries.updateSubscriptionStatus({
+//           subscription_id,
+//           status: 'canceled',
+//           metadata: {
+//             canceled_at: new Date().toISOString(),
+//             cancel_at_period_end,
+//             cancel_effective_date: cancel_at_period_end ? 
+//               new Date(canceledSubscription.current_period_end * 1000).toISOString() :
+//               new Date().toISOString()
+//           }
+//         });
 
-        logWebhookProgress('subscription.cancel', 'completed', {
-          subscription_id,
-          cancel_at_period_end,
-          pool_id: poolId
-        });
+//         logWebhookProgress('subscription.cancel', 'completed', {
+//           subscription_id,
+//           cancel_at_period_end,
+//           pool_id: poolId
+//         });
 
-        return canceledSubscription;
-      }, 'cancelSubscription');
+//         return canceledSubscription;
+//       }, 'cancelSubscription');
 
-      res.json({
-        message: cancel_at_period_end ? 
-          'Subscription will be canceled at the end of the billing period' : 
-          'Subscription canceled immediately',
-        subscription: result
-      });
-    } catch (error) {
-      console.error('Error canceling subscription:', error);
-      res.status(500).json({ error: error.message });
-    }
-  },
-  async PauseSubscription(req, res) {
-    try {
-      const { poolId } = req.params;
+//       res.json({
+//         message: cancel_at_period_end ? 
+//           'Subscription will be canceled at the end of the billing period' : 
+//           'Subscription canceled immediately',
+//         subscription: result
+//       });
+//     } catch (error) {
+//       console.error('Error canceling subscription:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   },
+//   async PauseSubscription(req, res) {
+//     try {
+//       const { poolId } = req.params;
    
-      // Check if subscription can be paused
-      const pauseCheck = await PoolQueries.canPauseSubscription(poolId);
-      if (!pauseCheck.canPause) {
-        return res.status(400).json({ 
-          error: pauseCheck.reason 
-        });
-      }
+//       // Check if subscription can be paused
+//       const pauseCheck = await PoolQueries.canPauseSubscription(poolId);
+//       if (!pauseCheck.canPause) {
+//         return res.status(400).json({ 
+//           error: pauseCheck.reason 
+//         });
+//       }
    
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
+//       const result = await retryOperation(async () => {
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
    
-        const subscription_id = subscriptions[0].subscription_id;
+//         const subscription_id = subscriptions[0].subscription_id;
         
-        // Update Stripe subscription
-        const pausedSubscription = await stripe.subscriptions.update(subscription_id, {
-          pause_collection: { behavior: 'void' },
-          proration_behavior: 'none' // Prevents proration
+//         // Update Stripe subscription
+//         const pausedSubscription = await stripe.subscriptions.update(subscription_id, {
+//           pause_collection: { behavior: 'void' },
+//           proration_behavior: 'none' // Prevents proration
 
-        });
+//         });
    
-        // Update local database
-        await PoolQueries.updateSubscriptionPauseStatus(subscription_id, true);
+//         // Update local database
+//         await PoolQueries.updateSubscriptionPauseStatus(subscription_id, true);
    
-        return pausedSubscription;
-      }, 'pauseSubscription');
+//         return pausedSubscription;
+//       }, 'pauseSubscription');
    
-      res.json({
-        subscription: result
-      });
-    } catch (error) {
-      console.error('Error pausing subscription:', error);
-      res.status(500).json({ error: error.message });
-    }
-   },
+//       res.json({
+//         subscription: result
+//       });
+//     } catch (error) {
+//       console.error('Error pausing subscription:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//    },
    
-   async ResumeSubscription(req, res) {
-    try {
-      const { poolId } = req.params;
+//    async ResumeSubscription(req, res) {
+//     try {
+//       const { poolId } = req.params;
    
-      // Check if subscription can be resumed
-      const resumeCheck = await PoolQueries.canResumeSubscription(poolId);
-      if (!resumeCheck.canResume) {
-        return res.status(400).json({ 
-          error: resumeCheck.reason || 'Cannot resume subscription' 
-        });
-      }
+//       // Check if subscription can be resumed
+//       const resumeCheck = await PoolQueries.canResumeSubscription(poolId);
+//       if (!resumeCheck.canResume) {
+//         return res.status(400).json({ 
+//           error: resumeCheck.reason || 'Cannot resume subscription' 
+//         });
+//       }
    
-      const result = await retryOperation(async () => {
-        const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subscriptions?.length) {
-          throw new Error('No subscription found for this pool');
-        }
-        let resumedSubscription;
-        const subscription_id = subscriptions[0].subscription_id;
-        if (subscriptions.length > 0 && subscriptions[0].next_payment_date) {
-          const nextPaymentDate = new Date(subscriptions[0].next_payment_date);
-          const currentDate = new Date();
-          console.log('Next Payment Date:', nextPaymentDate);
-          console.log('Current Date:', currentDate);
-          if (nextPaymentDate < currentDate) {
-            resumedSubscription = await stripe.subscriptions.update(subscription_id, {
-              pause_collection: null,
-              proration_behavior: 'none',
-              billing_cycle_anchor: 'now'
-            });
-            console.log('Resumed now');
-          } else {
-            resumedSubscription = await stripe.subscriptions.update(subscription_id, {
-              pause_collection: null,
-              proration_behavior: 'none',
-              billing_cycle_anchor: 'unchanged'
-            });
-            console.log('Resumed with unchanged');
-          }
-        } else {
-          throw new Error("No valid subscription data available.");
-        }
+//       const result = await retryOperation(async () => {
+//         const subscriptions = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subscriptions?.length) {
+//           throw new Error('No subscription found for this pool');
+//         }
+//         let resumedSubscription;
+//         const subscription_id = subscriptions[0].subscription_id;
+//         if (subscriptions.length > 0 && subscriptions[0].next_payment_date) {
+//           const nextPaymentDate = new Date(subscriptions[0].next_payment_date);
+//           const currentDate = new Date();
+//           console.log('Next Payment Date:', nextPaymentDate);
+//           console.log('Current Date:', currentDate);
+//           if (nextPaymentDate < currentDate) {
+//             resumedSubscription = await stripe.subscriptions.update(subscription_id, {
+//               pause_collection: null,
+//               proration_behavior: 'none',
+//               billing_cycle_anchor: 'now'
+//             });
+//             console.log('Resumed now');
+//           } else {
+//             resumedSubscription = await stripe.subscriptions.update(subscription_id, {
+//               pause_collection: null,
+//               proration_behavior: 'none',
+//               billing_cycle_anchor: 'unchanged'
+//             });
+//             console.log('Resumed with unchanged');
+//           }
+//         } else {
+//           throw new Error("No valid subscription data available.");
+//         }
      
         
 
-        // Update Stripe subscription
+//         // Update Stripe subscription
 
-        // Update local database
-        await PoolQueries.updateSubscriptionPauseStatus(subscription_id, false);
+//         // Update local database
+//         await PoolQueries.updateSubscriptionPauseStatus(subscription_id, false);
    
-        return resumedSubscription;
-      }, 'resumeSubscription');
+//         return resumedSubscription;
+//       }, 'resumeSubscription');
    
-      res.json({
-        subscription: result
-      });
-    } catch (error) {
-      console.error('Error resuming subscription:', error);
-      res.status(500).json({ error: error.message });
-    }
-   },
+//       res.json({
+//         subscription: result
+//       });
+//     } catch (error) {
+//       console.error('Error resuming subscription:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//    },
 
-  async getSubscriptionsByPoolId(req, res) {
-    try {
-      const { poolId } = req.params;
+//   async getSubscriptionsByPoolId(req, res) {
+//     try {
+//       const { poolId } = req.params;
       
-      if (!poolId) {
-        return res.status(400).json({ error: 'Pool ID is required' });
-      }
-      const pool_check = await PoolQueries.getPoolBalance(poolId);
-      if (!pool_check) {
-        res.json({
-          pool_id: poolId,
-          currency: null,
-          current_balance: 0.00,
-          subscriptions:[]
-        })
-      }
-      else{
+//       if (!poolId) {
+//         return res.status(400).json({ error: 'Pool ID is required' });
+//       }
+//       const pool_check = await PoolQueries.getPoolBalance(poolId);
+//       if (!pool_check) {
+//         res.json({
+//           pool_id: poolId,
+//           currency: null,
+//           current_balance: 0.00,
+//           subscriptions:[]
+//         })
+//       }
+//       else{
 
-      const subscriptions = await retryOperation(async () => {
-        const subs = await PoolQueries.getSubscriptionsByPoolId(poolId);
-        if (!subs?.length) {
-          return [];
-        }
+//       const subscriptions = await retryOperation(async () => {
+//         const subs = await PoolQueries.getSubscriptionsByPoolId(poolId);
+//         if (!subs?.length) {
+//           return [];
+//         }
 
-        return subs.map(sub => ({
-          subscription_id: sub.subscription_id,
-          status: sub.status,
-          amount: sub.amount,
-          currency: sub.currency,
-          interval: sub.interval,
-          last_payment_date: sub.last_payment_date,
-          next_payment_date: sub.next_payment_date,
-          card_details: sub.card_last4 ? {
-            last4: sub.card_last4,
-            brand: sub.card_brand,
-            exp_month: sub.card_exp_month,
-            exp_year: sub.card_exp_year
-          } : null,
-          metadata: sub.metadata
-        }));
-      }, 'getSubscriptionsByPoolId');
-      const poolData = await PoolQueries.getPoolBalance(poolId);
-      res.json({
-        pool_id: poolData.pool_id,
-        current_balance: poolData.current_balance,
-        currency: poolData.currency,
-        subscriptions: subscriptions,
-      });
-    }
-    } catch (error) {
-      console.error('Error in getSubscriptionsByPoolId:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  },
-  async  getInvoiceTransactions(req, res) {
-    try {
-      const { poolId } = req.params;
-      const transactions = await PoolQueries.getInvoiceTransactions(poolId);
+//         return subs.map(sub => ({
+//           subscription_id: sub.subscription_id,
+//           status: sub.status,
+//           amount: sub.amount,
+//           currency: sub.currency,
+//           interval: sub.interval,
+//           last_payment_date: sub.last_payment_date,
+//           next_payment_date: sub.next_payment_date,
+//           card_details: sub.card_last4 ? {
+//             last4: sub.card_last4,
+//             brand: sub.card_brand,
+//             exp_month: sub.card_exp_month,
+//             exp_year: sub.card_exp_year
+//           } : null,
+//           metadata: sub.metadata
+//         }));
+//       }, 'getSubscriptionsByPoolId');
+//       const poolData = await PoolQueries.getPoolBalance(poolId);
+//       res.json({
+//         pool_id: poolData.pool_id,
+//         current_balance: poolData.current_balance,
+//         currency: poolData.currency,
+//         subscriptions: subscriptions,
+//       });
+//     }
+//     } catch (error) {
+//       console.error('Error in getSubscriptionsByPoolId:', error);
+//       res.status(500).json({ error: 'Internal server error' });
+//     }
+//   },
+//   async  getInvoiceTransactions(req, res) {
+//     try {
+//       const { poolId } = req.params;
+//       const transactions = await PoolQueries.getInvoiceTransactions(poolId);
       
-      // Format the response
-      const formattedTransactions = transactions.map(tx => ({
-        id: tx.id,
-        type: tx.event_type,
-        status: tx.status,
-        amount: tx.amount,
-        date: tx.created_at,
-        subscription_id: tx.subscription_id,
-        interval: tx.interval,
-        metadata: tx.metadata,
-        currency: tx.metadata.currency
-      }));
+//       // Format the response
+//       const formattedTransactions = transactions.map(tx => ({
+//         id: tx.id,
+//         type: tx.event_type,
+//         status: tx.status,
+//         amount: tx.amount,
+//         date: tx.created_at,
+//         subscription_id: tx.subscription_id,
+//         interval: tx.interval,
+//         metadata: tx.metadata,
+//         currency: tx.metadata.currency
+//       }));
    
-      res.json({
-        pool_id: poolId,
-        transactions: formattedTransactions
-      });
+//       res.json({
+//         pool_id: poolId,
+//         transactions: formattedTransactions
+//       });
       
-    } catch (error) {
-      console.error('Error getting invoice transactions:', error);
-      res.status(500).json({ error: error.message });
-    }
-   },
-  async getPoolBalance(req, res) {
-    try {
-      const { poolId } = req.params;
+//     } catch (error) {
+//       console.error('Error getting invoice transactions:', error);
+//       res.status(500).json({ error: error.message });
+//     }
+//    },
+//   async getPoolBalance(req, res) {
+//     try {
+//       const { poolId } = req.params;
       
-      if (!poolId) {
-        return res.status(400).json({ error: 'Pool ID is required' });
-      }
-      const pool_check = await PoolQueries.getPoolBalance(poolId);
-      if (!pool_check) {
-        res.json({
-          pool_id: poolId,
-          currency: null,
-          current_balance: 0.00,
-        })
-      }
-      else{
-      const pool = await retryOperation(async () => {
-        const poolData = await PoolQueries.getPoolBalance(poolId);
+//       if (!poolId) {
+//         return res.status(400).json({ error: 'Pool ID is required' });
+//       }
+//       const pool_check = await PoolQueries.getPoolBalance(poolId);
+//       if (!pool_check) {
+//         res.json({
+//           pool_id: poolId,
+//           currency: null,
+//           current_balance: 0.00,
+//         })
+//       }
+//       else{
+//       const pool = await retryOperation(async () => {
+//         const poolData = await PoolQueries.getPoolBalance(poolId);
         
         
-        return poolData;
-      }, 'getPoolBalance');
+//         return poolData;
+//       }, 'getPoolBalance');
 
-      res.json({
-        pool_id: pool.pool_id,
-        current_balance: pool.current_balance,
-        currency: pool.currency,
-        last_updated: pool.updated_at
-      });
-    }
-    } catch (error) {
-      console.error('Error in getPoolBalance:', error);
-      if (error.message === 'Pool not found') {
-        res.status(404).json({ error: 'Pool not found' });
-      } else {
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    }
-  },
-  async markTransfersWithdrawn(req, res) {
-    try {
-      const { payout_id } = req.params;
-      const result = await SubscriptionService.markTransfersWithdrawn(payout_id);
-      res.status(200).json({
-        message: 'Transfers marked as withdrawn successfully',
-        transfers: result
-      });
-    } catch (error) {
-      console.error('Error marking transfers as withdrawn:', error);
-      res.status(500).json({ error: 'Failed to mark transfers as withdrawn' });
-    }
-  },
+//       res.json({
+//         pool_id: pool.pool_id,
+//         current_balance: pool.current_balance,
+//         currency: pool.currency,
+//         last_updated: pool.updated_at
+//       });
+//     }
+//     } catch (error) {
+//       console.error('Error in getPoolBalance:', error);
+//       if (error.message === 'Pool not found') {
+//         res.status(404).json({ error: 'Pool not found' });
+//       } else {
+//         res.status(500).json({ error: 'Internal server error' });
+//       }
+//     }
+//   },
+//   async markTransfersWithdrawn(req, res) {
+//     try {
+//       const { payout_id } = req.params;
+//       const result = await SubscriptionService.markTransfersWithdrawn(payout_id);
+//       res.status(200).json({
+//         message: 'Transfers marked as withdrawn successfully',
+//         transfers: result
+//       });
+//     } catch (error) {
+//       console.error('Error marking transfers as withdrawn:', error);
+//       res.status(500).json({ error: 'Failed to mark transfers as withdrawn' });
+//     }
+//   },
 
-  async getTransfersByPool(req, res) {
-    try {
-      const { poolId } = req.params;
-      const result = await SubscriptionService.getTransfersByPool(poolId);
-      res.status(200).json({
-        message: 'Transfers fetched successfully',
-        transfers: result
-      });
-    } catch (error) {
-      console.error('Error fetching transfers by pool:', error);
-      res.status(500).json({ error: 'Failed to fetch transfers by pool' });
-    }
-  },
+//   async getTransfersByPool(req, res) {
+//     try {
+//       const { poolId } = req.params;
+//       const result = await SubscriptionService.getTransfersByPool(poolId);
+//       res.status(200).json({
+//         message: 'Transfers fetched successfully',
+//         transfers: result
+//       });
+//     } catch (error) {
+//       console.error('Error fetching transfers by pool:', error);
+//       res.status(500).json({ error: 'Failed to fetch transfers by pool' });
+//     }
+//   },
 
-   async getTransfersByPayout(req, res) {
-    try {
-      const { payoutId } = req.params;
-      const result = await SubscriptionService.getTransfersByPayout(payoutId);
-      res.status(200).json({
-        message: 'Transfers fetched successfully',
-        transfers: result
-      });
-    } catch (error) {
-      console.error('Error fetching transfers by payout:', error);
-      res.status(500).json({ error: 'Failed to fetch transfers by payout' });
-    }
-  }
+//    async getTransfersByPayout(req, res) {
+//     try {
+//       const { payoutId } = req.params;
+//       const result = await SubscriptionService.getTransfersByPayout(payoutId);
+//       res.status(200).json({
+//         message: 'Transfers fetched successfully',
+//         transfers: result
+//       });
+//     } catch (error) {
+//       console.error('Error fetching transfers by payout:', error);
+//       res.status(500).json({ error: 'Failed to fetch transfers by payout' });
+//     }
+//   }
 
-};
+// };
 
-export const handlers = {
-  handleCheckoutCompleted,
-  handleInvoicePaid,
-  handleInvoiceFailed,
-  handleSubscriptionCreated,
-  handleSubscriptionUpdated,
-  handleSubscriptionCanceled,
-  handleCustomerUpdated  ,handlePayoutPaid,handlePaymentSuccess,getDefaultPaymentMethod,clearPendingInvoiceItems,createCustomer
-};
+// export const handlers = {
+//   handleCheckoutCompleted,
+//   handleInvoicePaid,
+//   handleInvoiceFailed,
+//   handleSubscriptionCreated,
+//   handleSubscriptionUpdated,
+//   handleSubscriptionCanceled,
+//   handleCustomerUpdated  ,handlePayoutPaid,handlePaymentSuccess,getDefaultPaymentMethod,clearPendingInvoiceItems,createCustomer
+// };
 
-// Export utility functions for testing and reuse
-export const utils = {
-  retryOperation,
-  ensurePoolExists,
-  verifySubscriptionExists,
-  getPaymentDetails,
-  logWebhookProgress
-};
+// // Export utility functions for testing and reuse
+// export const utils = {
+//   retryOperation,
+//   ensurePoolExists,
+//   verifySubscriptionExists,
+//   getPaymentDetails,
+//   logWebhookProgress
+// };

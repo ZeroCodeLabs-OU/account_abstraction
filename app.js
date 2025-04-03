@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import express from 'express';
 import multer from 'multer';
 
-import stripe from './src/api/config/stripe.js';
+// import stripe from './src/api/config/stripe.js';
 
 import {authenticateToken} from "./src/api/middleware/authenticateToken.js";
 import {
@@ -29,9 +29,11 @@ import {getERC20Balance,depositToPool,withdrawUSDC,pool_getERC20Balance,batchSen
 
 
 
-import {stripeController  } from './src/api/controllers/stripeController.js';
+// import {stripeController  } from './src/api/controllers/stripeController.js';
 
 import {Payment_Controller,handleStripeWebhook   } from './src/api/controllers/paymentController.js';
+
+import {Payment_Controller_v2,handleStripeWebhook_v2   } from './src/api/controllers/v2/Paymentv2_Controller.js';
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -104,7 +106,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post("/pools/update-card",authenticateToken, Payment_Controller.createBillingPortalSession);
   app.post("/pools/invoice",authenticateToken, Payment_Controller.createAndChargeInvoice);
   app.put('/pools/update-email',authenticateToken, Payment_Controller.updatePoolEmail);
-  app.get('/pools/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
+  app.get('/pools/:network/:pool_id/invoices',authenticateToken, Payment_Controller.getPaidInvoices);
   
   app.post('/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );
   app.post('/get-erc20-balance', authenticateToken, getERC20Balance);
@@ -113,205 +115,231 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
   app.post('/pools/rewards/distribute',authenticateToken, Payment_Controller.distributePoolRewards);
   app.post('/get-smart-account',authenticateToken, Payment_Controller.createSmartAccount);
   
-  app.get('/pools/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
+  app.get('/pools/:network/rewards',authenticateToken, Payment_Controller.getCalculatedRewards);
   app.get('/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller.calculateRewardUSDCAmount);
-  app.get('/invoices/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
+  app.get('/invoices/:network/pending-treasury',authenticateToken, Payment_Controller.getInvoicesPendingTreasury);
   app.post("/pools/rewards/pool-distribution",authenticateToken, Payment_Controller.processAndDistributeRewards);
   
-  //testing
-  app.get('/payout-details/:payoutId', async (req, res) => {
-    try {
-      const { payoutId } = req.params;
-  
-      if (!payoutId) {
-        return res.status(400).json({
-          success: false,
-          message: 'Payout ID is required'
-        });
-      }
-  
-      // 1. First fetch the payout details
-      const payout = await stripe.payouts.retrieve(payoutId);
-      
-      // 2. Then fetch all balance transactions associated with this payout
-      const balanceTransactions = await stripe.balanceTransactions.list({
-        payout: payoutId,
-        limit: 100 // Adjust based on your needs
-      });
-      const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
-      console.log('Transaction details:', {
-        total_transactions: balanceTransactions.data.length,
-        charge_transactions: chargeTransactions.length,
-        transaction_ids: chargeTransactions.map(t => t.id)
-      });
-      // 3. Process and format the transactions data
-      const transactionsData = balanceTransactions.data.map(transaction => ({
-        id: transaction.id,
-        amount: transaction.amount,
-        net: transaction.net,
-        fee: transaction.fee,
-        currency: transaction.currency,
-        type: transaction.type,
-        status: transaction.status,
-        available_on: new Date(transaction.available_on * 1000).toISOString(),
-        created: new Date(transaction.created * 1000).toISOString()
-      }));
-  
-      // 4. Calculate some summary statistics
-      const summary = {
-        total_amount: transactionsData.reduce((sum, t) => sum + t.amount, 0),
-        total_fees: transactionsData.reduce((sum, t) => sum + t.fee, 0),
-        total_net: transactionsData.reduce((sum, t) => sum + t.net, 0),
-        transaction_count: transactionsData.length
-      };
-  
-      // Log detailed information to console
-      console.log('Payout Details:', {
-        payout_id: payout.id,
-        payout_amount: payout.amount,
-        payout_status: payout.status,
-        payout_currency: payout.currency,
-        arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
-        summary,
-        transactions: transactionsData
-      });
-  
-      // Return response to client
-      return res.status(200).json({
-        success: true,
-        payout: {
-          id: payout.id,
-          amount: payout.amount,
-          currency: payout.currency,
-          status: payout.status,
-          arrival_date: new Date(payout.arrival_date * 1000).toISOString()
-        },
-        summary,
-        transactions: transactionsData,
-        charge_transactions: chargeTransactions
-      });
-  
-    } catch (error) {
-      console.error('Error fetching payout details:', error);
-      return res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    } 
-  });
 
 
-  app.get('/transaction-invoice/:transactionId', async (req, res) => {
-    try {
-      const { transactionId } = req.params;
+
+
+  //v2
+
+  app.post('/v2/webhook', express.raw({type: 'application/json'}), handleStripeWebhook_v2 );
+
+  app.post("/v2/pools/add-card",authenticateToken, Payment_Controller_v2.createSetupSession);//done
+  app.get("/v2/pools/:network/:pool_id/card-details",authenticateToken, Payment_Controller_v2.getPaymentMethodDetails);//done
+  app.post("/v2/pools/update-card",authenticateToken, Payment_Controller_v2.createBillingPortalSession);//done
+  app.post("/v2/pools/invoice",authenticateToken, Payment_Controller_v2.createAndChargeInvoice);//done
+  app.put('/v2/pools/update-email',authenticateToken, Payment_Controller_v2.updatePoolEmail);//done
+  app.get('/v2/pools/:network/:pool_id/invoices',authenticateToken, Payment_Controller_v2.getPaidInvoices);//done
   
-      if (!transactionId) {
-        return res.status(400).json({
-          success: false,
-          message: 'Transaction ID is required'
-        });
-      }
+  app.post('/v2/pools/get-erc20-balance', authenticateToken,pool_getERC20Balance );//done
+  app.post('/v2/get-erc20-balance', authenticateToken, getERC20Balance);//done
+  app.post('/v2/withdraw-usdc', authenticateToken, withdrawUSDC);//done
+  app.post('/v2/pools/rewards/initialize',authenticateToken, Payment_Controller_v2.initializePoolRewards);//done
+  app.post('/v2/pools/rewards/distribute',authenticateToken, Payment_Controller_v2.distributePoolRewards);//done
+  app.post('/v2/get-smart-account',authenticateToken, Payment_Controller_v2.createSmartAccount);//done
   
-      // 1. Retrieve the balance transaction
-      const balanceTransaction = await stripe.balanceTransactions.retrieve(transactionId);
+  app.get('/v2/pools/:network/rewards',authenticateToken, Payment_Controller_v2.getCalculatedRewards);//done
+  app.get('/v2/pools/:pool_id/invoices/:invoice_id/rewards/usdc',authenticateToken, Payment_Controller_v2.calculateRewardUSDCAmount);//done
+  app.get('/v2/invoices/:network/pending-treasury',authenticateToken, Payment_Controller_v2.getInvoicesPendingTreasury);//done
+  app.post("/v2/pools/rewards/pool-distribution",authenticateToken, Payment_Controller_v2.processAndDistributeRewards);//done
+  //testing code for debugging payout
+  // app.get('/payout-details/:payoutId', async (req, res) => {
+  //   try {
+  //     const { payoutId } = req.params;
+  
+  //     if (!payoutId) {
+  //       return res.status(400).json({
+  //         success: false,
+  //         message: 'Payout ID is required'
+  //       });
+  //     }
+  
+  //     // 1. First fetch the payout details
+  //     const payout = await stripe.payouts.retrieve(payoutId);
       
-      if (!balanceTransaction?.source) {
-        return res.status(404).json({
-          success: false,
-          message: `No source found for transaction: ${transactionId}`
-        });
-      }
+  //     // 2. Then fetch all balance transactions associated with this payout
+  //     const balanceTransactions = await stripe.balanceTransactions.list({
+  //       payout: payoutId,
+  //       limit: 100 // Adjust based on your needs
+  //     });
+  //     const chargeTransactions = balanceTransactions.data.filter(t => t.type === 'charge');
+  //     console.log('Transaction details:', {
+  //       total_transactions: balanceTransactions.data.length,
+  //       charge_transactions: chargeTransactions.length,
+  //       transaction_ids: chargeTransactions.map(t => t.id)
+  //     });
+  //     // 3. Process and format the transactions data
+  //     const transactionsData = balanceTransactions.data.map(transaction => ({
+  //       id: transaction.id,
+  //       amount: transaction.amount,
+  //       net: transaction.net,
+  //       fee: transaction.fee,
+  //       currency: transaction.currency,
+  //       type: transaction.type,
+  //       status: transaction.status,
+  //       available_on: new Date(transaction.available_on * 1000).toISOString(),
+  //       created: new Date(transaction.created * 1000).toISOString()
+  //     }));
   
-      // 2. Check if this is a charge-type transaction
-      if (balanceTransaction.type !== 'charge') {
-        return res.status(400).json({
-          success: false,
-          message: `Transaction ${transactionId} is not a charge (type: ${balanceTransaction.type})`
-        });
-      }
+  //     // 4. Calculate some summary statistics
+  //     const summary = {
+  //       total_amount: transactionsData.reduce((sum, t) => sum + t.amount, 0),
+  //       total_fees: transactionsData.reduce((sum, t) => sum + t.fee, 0),
+  //       total_net: transactionsData.reduce((sum, t) => sum + t.net, 0),
+  //       transaction_count: transactionsData.length
+  //     };
   
-      // 3. Get the charge details
-      const charge = await stripe.charges.retrieve(balanceTransaction.source);
+  //     // Log detailed information to console
+  //     console.log('Payout Details:', {
+  //       payout_id: payout.id,
+  //       payout_amount: payout.amount,
+  //       payout_status: payout.status,
+  //       payout_currency: payout.currency,
+  //       arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
+  //       summary,
+  //       transactions: transactionsData
+  //     });
   
-      if (!charge?.payment_intent) {
-        return res.status(404).json({
-          success: false,
-          message: `No payment intent found for charge: ${charge.id}`
-        });
-      }
+  //     // Return response to client
+  //     return res.status(200).json({
+  //       success: true,
+  //       payout: {
+  //         id: payout.id,
+  //         amount: payout.amount,
+  //         currency: payout.currency,
+  //         status: payout.status,
+  //         arrival_date: new Date(payout.arrival_date * 1000).toISOString()
+  //       },
+  //       summary,
+  //       transactions: transactionsData,
+  //       charge_transactions: chargeTransactions
+  //     });
   
-      // 4. Get the payment intent
-      const paymentIntent = await stripe.paymentIntents.retrieve(charge.payment_intent);
+  //   } catch (error) {
+  //     console.error('Error fetching payout details:', error);
+  //     return res.status(500).json({
+  //       success: false,
+  //       error: error.message
+  //     });
+  //   } 
+  // });
+
+
+  // app.get('/transaction-invoice/:transactionId', async (req, res) => {
+  //   try {
+  //     const { transactionId } = req.params;
   
-      if (!paymentIntent?.invoice) {
-        return res.status(404).json({
-          success: false,
-          message: `No invoice found for payment intent: ${paymentIntent.id}`
-        });
-      }
+  //     if (!transactionId) {
+  //       return res.status(400).json({
+  //         success: false,
+  //         message: 'Transaction ID is required'
+  //       });
+  //     }
   
-      // 5. Get the invoice
-      const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+  //     // 1. Retrieve the balance transaction
+  //     const balanceTransaction = await stripe.balanceTransactions.retrieve(transactionId);
+      
+  //     if (!balanceTransaction?.source) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         message: `No source found for transaction: ${transactionId}`
+  //       });
+  //     }
   
-      // 6. Format the response
-      const invoiceData = {
-        invoice_details: {
-          id: invoice.id,
-          number: invoice.number,
-          status: invoice.status,
-          amount_paid: invoice.amount_paid,
-          amount_due: invoice.amount_due,
-          currency: invoice.currency,
-          customer_id: invoice.customer,
-          customer_email: invoice.customer_email,
-          metadata: invoice.metadata,
-          created: new Date(invoice.created * 1000).toISOString(),
-          payment_intent_id: paymentIntent.id
-        },
-        transaction_details: {
-          id: balanceTransaction.id,
-          amount: balanceTransaction.amount,
-          net: balanceTransaction.net,
-          fee: balanceTransaction.fee,
-          currency: balanceTransaction.currency,
-          type: balanceTransaction.type,
-          status: balanceTransaction.status,
-          available_on: new Date(balanceTransaction.available_on * 1000).toISOString(),
-          created: new Date(balanceTransaction.created * 1000).toISOString()
-        },
-        charge_details: {
-          id: charge.id,
-          amount: charge.amount,
-          status: charge.status,
-          payment_method: charge.payment_method,
-          payment_method_details: charge.payment_method_details
-        }
-      };
+  //     // 2. Check if this is a charge-type transaction
+  //     if (balanceTransaction.type !== 'charge') {
+  //       return res.status(400).json({
+  //         success: false,
+  //         message: `Transaction ${transactionId} is not a charge (type: ${balanceTransaction.type})`
+  //       });
+  //     }
   
-      // Log detailed information to console
-      console.log('Invoice Details:', {
-        transaction_id: transactionId,
-        invoice_id: invoice.id,
-        payment_intent_id: paymentIntent.id,
-        charge_id: charge.id,
-        amount: invoice.amount_paid,
-        status: invoice.status
-      });
+  //     // 3. Get the charge details
+  //     const charge = await stripe.charges.retrieve(balanceTransaction.source);
   
-      // Return response to client
-      return res.status(200).json({
-        success: true,
-        data: invoiceData
-      });
+  //     if (!charge?.payment_intent) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         message: `No payment intent found for charge: ${charge.id}`
+  //       });
+  //     }
   
-    } catch (error) {
-      console.error('Error fetching invoice details:', error);
-      return res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  });
+  //     // 4. Get the payment intent
+  //     const paymentIntent = await stripe.paymentIntents.retrieve(charge.payment_intent);
+  
+  //     if (!paymentIntent?.invoice) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         message: `No invoice found for payment intent: ${paymentIntent.id}`
+  //       });
+  //     }
+  
+  //     // 5. Get the invoice
+  //     const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+  
+  //     // 6. Format the response
+  //     const invoiceData = {
+  //       invoice_details: {
+  //         id: invoice.id,
+  //         number: invoice.number,
+  //         status: invoice.status,
+  //         amount_paid: invoice.amount_paid,
+  //         amount_due: invoice.amount_due,
+  //         currency: invoice.currency,
+  //         customer_id: invoice.customer,
+  //         customer_email: invoice.customer_email,
+  //         metadata: invoice.metadata,
+  //         created: new Date(invoice.created * 1000).toISOString(),
+  //         payment_intent_id: paymentIntent.id
+  //       },
+  //       transaction_details: {
+  //         id: balanceTransaction.id,
+  //         amount: balanceTransaction.amount,
+  //         net: balanceTransaction.net,
+  //         fee: balanceTransaction.fee,
+  //         currency: balanceTransaction.currency,
+  //         type: balanceTransaction.type,
+  //         status: balanceTransaction.status,
+  //         available_on: new Date(balanceTransaction.available_on * 1000).toISOString(),
+  //         created: new Date(balanceTransaction.created * 1000).toISOString()
+  //       },
+  //       charge_details: {
+  //         id: charge.id,
+  //         amount: charge.amount,
+  //         status: charge.status,
+  //         payment_method: charge.payment_method,
+  //         payment_method_details: charge.payment_method_details
+  //       }
+  //     };
+  
+  //     // Log detailed information to console
+  //     console.log('Invoice Details:', {
+  //       transaction_id: transactionId,
+  //       invoice_id: invoice.id,
+  //       payment_intent_id: paymentIntent.id,
+  //       charge_id: charge.id,
+  //       amount: invoice.amount_paid,
+  //       status: invoice.status
+  //     });
+  
+  //     // Return response to client
+  //     return res.status(200).json({
+  //       success: true,
+  //       data: invoiceData
+  //     });
+  
+  //   } catch (error) {
+  //     console.error('Error fetching invoice details:', error);
+  //     return res.status(500).json({
+  //       success: false,
+  //       error: error.message
+  //     });
+  //   }
+  // });
 
 
 

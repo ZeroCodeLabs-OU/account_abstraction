@@ -19,7 +19,19 @@ function getSigner(encrypted_wallet) {
 
   return {signer};
 }
-
+export function get_address(network){
+  const address = {
+    mainnet: {
+      Distributor: process.env.distributor_contract_address_mainnet,
+      Token: process.env.token_address_mainnet,
+    },
+    testnet: {
+      Distributor: process.env.distributor_contract_address_testnet,
+      Token: process.env.token_address_testnet,
+    }
+  }[network];
+  return address;
+}
 
 function getSigner_network(encrypted_wallet, network) {
   // Decrypt retrieved data

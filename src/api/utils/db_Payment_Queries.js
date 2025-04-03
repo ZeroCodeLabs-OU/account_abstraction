@@ -88,30 +88,59 @@ export class PoolQueries {
     }
 }
 
-  static async getInvoicesWithPayoutPendingTreasury() {
-    const query = `
-        SELECT 
-            i.*,
-            t.payout_id,
-            t.transaction_id,
-            t.settlement_datetime,
-            t.treasury_withdrawn,
-            t.treasury_withdrawn_at
-        FROM payment_system.invoices i
-        JOIN payment_system.transfers t ON i.invoice_id = t.invoice_id
-        WHERE t.payout_id IS NOT NULL 
-        AND t.settlement_datetime IS NOT NULL
-        AND t.treasury_withdrawn = false
-        ORDER BY t.settlement_datetime DESC;
-    `;
+static async getInvoicesWithPayoutPendingTreasury(network) {
+  const query = `
+      SELECT 
+          i.*,
+          t.payout_id,
+          t.transaction_id,
+          t.settlement_datetime,
+          t.treasury_withdrawn,
+          t.treasury_withdrawn_at
+      FROM payment_system.invoices i
+      JOIN payment_system.transfers t ON i.invoice_id = t.invoice_id
+      JOIN pools p ON p.pool_id = i.pool_id
+      WHERE t.payout_id IS NOT NULL 
+      AND t.settlement_datetime IS NOT NULL
+      AND t.treasury_withdrawn = false
+      AND p.network = $1
+      ORDER BY t.settlement_datetime DESC;
+  `;
 
-    try {
-        const result = await pool.query(query);
-        return result.rows;
-    } catch (error) {
-        console.error('Error fetching invoices pending treasury:', error);
-        throw error;
-    }
+  try {
+      const result = await pool.query(query, [network]);
+      return result.rows;
+  } catch (error) {
+      console.error('Error fetching invoices pending treasury:', error);
+      throw error;
+  }
+}
+static async getInvoicesWithPayoutPendingTreasury(network) {
+  const query = `
+      SELECT 
+          i.*,
+          t.payout_id,
+          t.transaction_id,
+          t.settlement_datetime,
+          t.treasury_withdrawn,
+          t.treasury_withdrawn_at
+      FROM payment_system.invoices i
+      JOIN payment_system.transfers t ON i.invoice_id = t.invoice_id
+      JOIN payment_system.pools p ON p.pool_id = i.pool_id
+      WHERE t.payout_id IS NOT NULL 
+      AND t.settlement_datetime IS NOT NULL
+      AND t.treasury_withdrawn = false
+      AND p.network = $1
+      ORDER BY t.settlement_datetime DESC;
+  `;
+
+  try {
+      const result = await pool.query(query, [network]);
+      return result.rows;
+  } catch (error) {
+      console.error('Error fetching invoices pending treasury:', error);
+      throw error;
+  }
 }
 
   static async createOrUpdatePool(data) {
@@ -121,13 +150,14 @@ export class PoolQueries {
 
       const query = `
         INSERT INTO payment_system.pools 
-        (pool_id, email, customer_id, smart_account_address, metadata)
-        VALUES ($1, $2, $3, $4, $5)
+        (pool_id, email, customer_id, smart_account_address,network, metadata)
+        VALUES ($1, $2, $3, $4, $5,$6)
         ON CONFLICT (pool_id) 
         DO UPDATE SET
           email = EXCLUDED.email,
           customer_id = EXCLUDED.customer_id,
           smart_account_address = EXCLUDED.smart_account_address,
+          network=EXCLUDED.network,
           metadata = COALESCE(payment_system.pools.metadata, '{}')::jsonb || EXCLUDED.metadata::jsonb,
           updated_at = CURRENT_TIMESTAMP
         RETURNING *;
@@ -138,6 +168,7 @@ export class PoolQueries {
         data.email,
         data.customer_id,
         data.smartAccountAddress,
+        data.network,
         data.metadata || {}
       ];
 
@@ -319,7 +350,7 @@ export class PoolQueries {
   }
 
 
-  static async getPoolInfo(poolId) {
+  static async getPoolInfo(poolId,network) {
     const query = `
       SELECT 
         pool_id,
@@ -332,11 +363,11 @@ export class PoolQueries {
         created_at,
         updated_at
       FROM payment_system.pools
-      WHERE pool_id = $1;
+      WHERE pool_id = $1 AND network = $2;
     `;
 
     try {
-      const result = await this.executeQuery(query, [poolId]);
+      const result = await this.executeQuery(query, [poolId,network]);
       return result[0];
     } catch (error) {
       console.error('Error fetching pool info:', error);
@@ -945,7 +976,7 @@ static async getRewardsForInvoice(poolId, invoiceId) {
       throw error;
   }
 }
-static async getPendingBatchRewards() {
+static async getPendingBatchRewards(network) {
   const query = `
       SELECT DISTINCT ON (i.invoice_id)
           i.invoice_id,
@@ -957,12 +988,14 @@ static async getPendingBatchRewards() {
       FROM payment_system.invoices i
       JOIN payment_system.transfers t ON t.invoice_id = i.invoice_id
       JOIN payment_system.pool_rewards pr ON pr.invoice_id = i.invoice_id
+      JOIN payment_system.pools p ON p.pool_id = i.pool_id
       WHERE t.payout_id IS NOT NULL 
       AND t.treasury_withdrawn = false
       AND pr.calculated_reward IS NOT NULL
+      AND p.network = $1
       ORDER BY i.invoice_id, i.created_at DESC;
   `;
-  return (await pool.query(query)).rows;
+  return (await pool.query(query, [network])).rows;
 }
 static async getPaidInvoices({ pool_id, limit, offset }) {
   const client = await pool.connect();
