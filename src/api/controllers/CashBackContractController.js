@@ -89,7 +89,9 @@ export const getERC20Balance = async (req, res) => {
   export const pool_getERC20Balance = async (req, res) => {
     const {  network } = req.body;
     const { wallet_data } = req.auth;
-    
+    const address =await get_address(network)
+    const smartcontract = address.Distributor;
+    const tokenAddress = address.Token;
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
@@ -102,9 +104,7 @@ export const getERC20Balance = async (req, res) => {
       return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
     }
 
-    const address =await get_address(network)
-    const smartcontract = address.Distributor;
-    const tokenAddress = address.Token;
+    
     try {
       const { signer, config } = getSigner_network(wallet_data, network);
       
