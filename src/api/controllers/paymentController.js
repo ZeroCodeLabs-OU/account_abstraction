@@ -717,7 +717,7 @@ export const Payment_Controller = {
       }
 
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
   
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -816,12 +816,7 @@ export const Payment_Controller = {
             }
         }
 
-        // Network validation
-        if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-            return res.status(400).json({
-                error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.'
-            });
-        }
+       
 
         let smartAccountAddress;
         // Only create new smart account if pool doesn't exist
@@ -897,7 +892,7 @@ async createAndChargeInvoice(req, res) {
           });
       }
       if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
 
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1047,7 +1042,7 @@ async updatePoolEmail(req, res) {
           });
       }
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
       // Validate email format
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1107,7 +1102,7 @@ async getCalculatedRewards(req, res) {
   try {
       const {network}= req.params;
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
       
   
@@ -1195,7 +1190,7 @@ async getPaidInvoices(req, res) {
           });
       }
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only  "testnet" are allowed.' });
       }
 
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1258,7 +1253,7 @@ async initializePoolRewards(req, res) {
       } 
 
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
       
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1367,8 +1362,8 @@ async createSmartAccount  (req, res)  {
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    if (!network || ( network !== 'testnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
     }
 
     // Get signer and configuration
@@ -1469,7 +1464,7 @@ async calculateRewardUSDCAmount(req, res) {
       const { pool_id, invoice_id,network } = req.params;
       const USDC_DECIMALS = 6;
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only "testnet" are allowed.' });
       }
       
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
@@ -1570,7 +1565,7 @@ async getInvoicesPendingTreasury(req, res) {
   try {
       const {network}= req.params;
     if (!network || (network !== 'testnet')) {
-        return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+        return res.status(400).json({ error: 'Invalid network parameter. Only  and "testnet" are allowed.' });
       }
       
    

@@ -1360,8 +1360,8 @@ async createSmartAccount  (req, res)  {
     if (!wallet_data || !wallet_data.encryptedData || !wallet_data.iv) {
       return res.status(400).json({ error: 'Invalid encrypted wallet data' });
     }
-    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet' )) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  allowed.' });
     }
 
     // Get signer and configuration
@@ -1565,8 +1565,8 @@ async calculateRewardUSDCAmount(req, res) {
 async getInvoicesPendingTreasury(req, res) {
   try {
     const {network}= req.params;
-    if (!network || (network !== 'mainnet' && network !== 'testnet')) {
-      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet" and "testnet" are allowed.' });
+    if (!network || (network !== 'mainnet')) {
+      return res.status(400).json({ error: 'Invalid network parameter. Only "mainnet"  are allowed.' });
     }
     
       const invoices = await PoolQueries.getInvoicesWithPayoutPendingTreasury(network);
