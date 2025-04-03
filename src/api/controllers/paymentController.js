@@ -593,7 +593,7 @@ async function createCustomer({ pool_id, email }) {
   
     try {
       // Get the webhook secret from environment variables
-      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      const webhookSecret = process.env.STRIPE_WEBHOOK_TEST_SECRET;
       
       // Verify the webhook signature
       event = stripe.webhooks.constructEvent(

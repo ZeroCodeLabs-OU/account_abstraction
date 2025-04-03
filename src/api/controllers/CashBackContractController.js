@@ -103,7 +103,7 @@ export const getERC20Balance = async (req, res) => {
     }
 
     const address =await get_address(network)
-    const smartcontract = address.address.Distributor;
+    const smartcontract = address.Distributor;
     const tokenAddress = address.Token;
     try {
       const { signer, config } = getSigner_network(wallet_data, network);
@@ -196,7 +196,7 @@ export const getERC20Balance = async (req, res) => {
         return res.status(400).json({ error: 'Invalid network parameter' });
     }
     const address =await get_address(network)
-    const smartcontract = address.address.Distributor;
+    const smartcontract = address.Distributor;
     const tokenAddress = address.Token;
     if (!ethers.isAddress(tokenAddress)) {
         return res.status(400).json({ error: 'Invalid USDC token address' });

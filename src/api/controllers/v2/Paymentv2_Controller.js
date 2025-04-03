@@ -1616,7 +1616,7 @@ async processAndDistributeRewards(req, res) {
           });
       }
       const address= await get_address(network)
-      const usdc_token_address =address.address.Token
+      const usdc_token_address =address.Token
       const distributor_contract_address =address.Distributor
       const poolInfo = await PoolQueries.getPoolInfo(pool_id,network);
       if (!poolInfo?.customer_id) {
