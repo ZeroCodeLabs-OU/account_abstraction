@@ -40,7 +40,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const storage = multer.memoryStorage();
 
 app.post('/webhook', express.raw({type: 'application/json'}), handleStripeWebhook );
-
+app.post('/v2/webhook', express.raw({type: 'application/json'}), handleStripeWebhook_v2 );
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -126,7 +126,7 @@ app.post('/api/jwt', authenticateToken, (req, res) => {
 
   //v2
 
-  app.post('/v2/webhook', express.raw({type: 'application/json'}), handleStripeWebhook_v2 );
+  
 
   app.post("/v2/pools/add-card",authenticateToken, Payment_Controller_v2.createSetupSession);//done
   app.get("/v2/pools/:pool_id/card-details",authenticateToken, Payment_Controller_v2.getPaymentMethodDetails);//done
