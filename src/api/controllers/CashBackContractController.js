@@ -152,6 +152,7 @@ export const getERC20Balance = async (req, res) => {
         success: true,
         data: {
           smartAccountAddress,
+          smartcontract,
           tokenAddress,
           symbol,
           balance: formattedBalance,
