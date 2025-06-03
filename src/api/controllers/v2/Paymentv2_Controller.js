@@ -4,6 +4,8 @@ import { getSigner, getSigner_network,get_address } from '../../services/biconom
 import { createSmartAccountClient, createPaymaster,PaymasterMode } from '@biconomy/account';
 import { ethers } from 'ethers';
 import axios from 'axios';
+import {waitForUserOperationEvent} from '../../utils/biconomyUserOp.js';
+
 const stripe = new Stripe(process.env.STRIPE_PRODUCTION_SECRET_KEY);
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
@@ -315,19 +317,25 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       const txResponse = await biconomySmartAccount.sendTransaction(transactions, {
           paymasterServiceData: { mode: PaymasterMode.SPONSORED }
       });
-
-      const { transactionHash } = await txResponse.waitForTxHash();
-      console.log('Transaction hash:', transactionHash);
+      let result;
+      console.log("txResponse",txResponse)
+      try {
+        console.log(`Waiting for UserOperationEvent with hash: ${txResponse.userOpHash}`);
+        result = await waitForUserOperationEvent(provider, txResponse.userOpHash);
+        console.log('UserOperation completed!', result);
+       
+      } catch (error) {
+        console.error('Error:', error.message);
+      }
 
       const txReceipt = await txResponse.wait();
-      
-      if (txReceipt.success=='false') {
+       if (!result.success) {
           throw new Error('Transaction failed to execute');
       }
 
       // Finalize the distribution
       await PoolQueries.finalizeRewardDistribution(
-        transactionHash,
+        txReceipt.userOpHash,
         pool_id,
         invoice_id
       );
@@ -336,7 +344,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
           success: true,
           message: "Reward distribution completed successfully",
           data: {
-              transactionHash,
+              transactionHash:txReceipt.userOpHash,
               from: normalizedSmartAccountAddress,
               totalAmount: ethers.formatUnits(totalAmount, USDC_DECIMALS),
               recipientCount: Object.keys(aggregatedRewards).length,
@@ -363,6 +371,7 @@ async function calculateAndDistributeRewards(pool_id, invoice_id, wallet_data, n
       };
   }
 }
+
 
 
 
@@ -1780,20 +1789,31 @@ async processAndDistributeRewards(req, res) {
                       data: withdrawData
                   };
 
-                  const withdrawResponse = await biconomyAccount.sendTransaction(withdrawTx, {
+                 const withdrawResponse = await biconomyAccount.sendTransaction(withdrawTx, {
                       paymasterServiceData: { mode: PaymasterMode.SPONSORED }
                   });
+                  let result;
+                  console.log("withdrawResponse",withdrawResponse)
+                  try {
+                    console.log(`Waiting for UserOperationEvent with hash: ${withdrawResponse.userOpHash}`);
+                    result = await waitForUserOperationEvent(provider, withdrawResponse.userOpHash);
+                    console.log('UserOperation completed!', result);
+                  
+                  } catch (error) {
+                    console.error('Error:', error.message);
+                  }
 
+                
                   const withdrawReceipt = await withdrawResponse.wait();
                   console.log('Withdrawal receipt:', withdrawReceipt);
-                  if (withdrawReceipt.success=="false") {
-                      throw new Error(`Withdrawal failed for ${reward.address}`);
+                  if (!result.success) {
+                      throw new Error('Transaction failed to execute');
                   }
 
                   withdrawResults.push({
                       address: reward.address,
                       amount: reward.amount,
-                      txHash: withdrawReceipt.transactionHash
+                      txHash: withdrawReceipt.userOpHash
                   });
               }
 
@@ -1801,7 +1821,7 @@ async processAndDistributeRewards(req, res) {
               await PoolQueries.updateDistributionStatus({
                   pool_id,
                   invoice_id,
-                  transaction_hash: allowanceReceipt.transactionHash,
+                  transaction_hash: allowanceReceipt.userOpHash,
                   status: 'succeeded'
               });
 

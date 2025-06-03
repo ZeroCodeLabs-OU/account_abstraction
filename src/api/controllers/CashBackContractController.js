@@ -3,6 +3,7 @@ import { createSmartAccountClient, createPaymaster, PaymasterMode } from '@bicon
 import { getSigner_network,get_address } from '../services/biconomyService.js';
 import dotenv from 'dotenv';
 dotenv.config();
+import {waitForUserOperationEvent} from '../utils/biconomyUserOp.js';
 
 export const getERC20Balance = async (req, res) => {
     const { network } = req.body;
@@ -248,10 +249,22 @@ export const getERC20Balance = async (req, res) => {
         const txResponse = await biconomySmartAccount.sendTransaction(tx, {
             paymasterServiceData: { mode: PaymasterMode.SPONSORED }
         });
-        const txReceipt = await txResponse.wait();
-        if (txReceipt.success=="false") {
-          throw new Error('Withdrawal transaction failed');
+        let result;
+      console.log("txResponse",txResponse)
+        try {
+            console.log(`Waiting for UserOperationEvent with hash: ${txResponse.userOpHash}`);
+            result = await waitForUserOperationEvent(provider, txResponse.userOpHash);
+            console.log('UserOperation completed!', result);
+        
+        } catch (error) {
+            console.error('Error:', error.message);
         }
+
+        const txReceipt = await txResponse.wait();
+        if (!result.success) {
+                throw new Error('Transaction failed to execute');
+            } 
+        
         res.status(200).json({
             success: true,
             message: "USDC withdrawn successfully",
