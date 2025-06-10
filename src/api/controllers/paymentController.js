@@ -1770,14 +1770,21 @@ async processAndDistributeRewards(req, res) {
                   paymasterServiceData: { mode: PaymasterMode.SPONSORED }
               });
 
-              console.log('Allowance transaction sent:', allowanceResponse);
-              
-              const allowanceReceipt = await allowanceResponse.wait();
-              console.log('Allowance receipt:', allowanceReceipt);
-              if (allowanceReceipt.success=="false") {
-                  throw new Error('Setting allowances failed');
-              }
+              let result;
+                  console.log("allowanceResponse",allowanceResponse)
+                  try {
+                    console.log(`Waiting for UserOperationEvent with hash: ${allowanceResponse.userOpHash}`);
+                    result = await waitForUserOperationEvent(provider, allowanceResponse.userOpHash);
+                    console.log('UserOperation completed!', result);
+                  
+                  } catch (error) {
+                    console.error('Error:', error.message);
+                  }
 
+                  if (!result.success) {
+                      throw new Error(' Allowance Transaction failed to execute');
+                  }
+                  const allowanceReceipt = await allowanceResponse.wait()
               // Process withdrawals for consolidated amounts
               const withdrawResults = [];
               for (const reward of consolidatedRewards) {
